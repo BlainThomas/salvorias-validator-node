@@ -129,6 +129,36 @@ This mode requires the old validator to be live and current. It refuses to run
 more than 1,000 blocks early or at/after activation. The policy transition remains
 dormant in the new binary until the exact activation height.
 
+### Validator missed the coordinated activation
+
+If a validator did not install the release before activation, stop it and wait
+until a trusted canonical RPC has passed the activation height. Then use the
+same pinned release values with the explicit recovery guard:
+
+```bash
+sudo ./scripts/upgrade-validator.sh apply \
+  --post-hardfork-recovery \
+  --trusted-rpc http://134.199.216.166:26660 \
+  --upgrade-name "$UPGRADE_NAME" \
+  --upgrade-height "$UPGRADE_HEIGHT" \
+  --minimum-gas-prices "$MINIMUM_GAS_PRICES" \
+  --image "$IMAGE" \
+  --image-tarball-url "$IMAGE_TARBALL_URL" \
+  --image-tarball-sha256 "$IMAGE_TARBALL_SHA256" \
+  --binary-sha256 "$BINARY_SHA256"
+```
+
+This mode remains fail-closed until the trusted RPC reports the expected chain
+at or above the activation height. It preserves the validator keys, signing
+state, configuration, and local block data, then starts the new binary so a
+minority node halted at the fork boundary can replay and catch up normally.
+It does not erase chain data or reset the validator signing height.
+
+If the node committed blocks on a genuinely divergent fork, stop it and
+escalate to the operator team. Do not use `unsafe-reset-all` or reset
+`priv_validator_state.json`; a divergent signer needs a separately verified
+state-sync recovery that preserves its last signed height.
+
 ## 4. Verify after the network resumes
 
 ```bash
