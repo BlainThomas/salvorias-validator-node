@@ -15,6 +15,8 @@ UPGRADE_HEIGHT="${UPGRADE_HEIGHT:-}"
 UPGRADE_NAME="${UPGRADE_NAME:-}"
 MINIMUM_GAS_PRICES="${MINIMUM_GAS_PRICES:-}"
 COORDINATED_HARDFORK="${COORDINATED_HARDFORK:-false}"
+POST_HARDFORK_RECOVERY="${POST_HARDFORK_RECOVERY:-false}"
+TRUSTED_RPC="${TRUSTED_RPC:-http://134.199.216.166:26660}"
 CONTAINER_NAME="${CONTAINER_NAME:-}"
 BACKUP_ROOT="${BACKUP_ROOT:-/var/backups/salvorias-validator}"
 HOME_DIR="/home/evmos/.evmosd"
@@ -27,6 +29,7 @@ Usage:
   sudo ./scripts/upgrade-validator.sh preflight --image IMAGE@sha256:DIGEST --binary-sha256 SHA256 [--container NAME]
   sudo ./scripts/upgrade-validator.sh apply     --upgrade-name NAME --upgrade-height HEIGHT --minimum-gas-prices PRICE --image IMAGE@sha256:DIGEST --binary-sha256 SHA256 [--container NAME]
   sudo ./scripts/upgrade-validator.sh apply     --coordinated-hardfork --upgrade-name NAME --upgrade-height HEIGHT --minimum-gas-prices PRICE --image IMAGE_TAG --image-tarball-url URL --image-tarball-sha256 SHA256 --binary-sha256 SHA256
+  sudo ./scripts/upgrade-validator.sh apply     --post-hardfork-recovery --trusted-rpc URL --upgrade-name NAME --upgrade-height HEIGHT --minimum-gas-prices PRICE --image IMAGE_TAG --image-tarball-url URL --image-tarball-sha256 SHA256 --binary-sha256 SHA256
   sudo ./scripts/upgrade-validator.sh preflight --image IMAGE_TAG --image-tarball-url URL --image-tarball-sha256 SHA256 --binary-sha256 SHA256
   sudo ./scripts/upgrade-validator.sh apply     --upgrade-name NAME --upgrade-height HEIGHT --minimum-gas-prices PRICE --image IMAGE_TAG --image-tarball-url URL --image-tarball-sha256 SHA256 --binary-sha256 SHA256
   sudo ./scripts/upgrade-validator.sh verify                                          [--container NAME]
@@ -50,6 +53,8 @@ while [[ $# -gt 0 ]]; do
     --upgrade-name) UPGRADE_NAME="$2"; shift 2 ;;
     --minimum-gas-prices) MINIMUM_GAS_PRICES="$2"; shift 2 ;;
     --coordinated-hardfork) COORDINATED_HARDFORK=true; shift ;;
+    --post-hardfork-recovery) POST_HARDFORK_RECOVERY=true; shift ;;
+    --trusted-rpc) TRUSTED_RPC="$2"; shift 2 ;;
     --container) CONTAINER_NAME="$2"; shift 2 ;;
     --backup-root) BACKUP_ROOT="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -67,7 +72,7 @@ if [[ "$(id -u)" -ne 0 ]]; then
   exit 1
 fi
 
-for command in docker jq sha256sum tar; do
+for command in curl docker jq sha256sum tar; do
   command -v "$command" >/dev/null 2>&1 || { echo "Missing required command: $command" >&2; exit 1; }
 done
 
@@ -419,7 +424,23 @@ if [[ "$MODE" == "apply" ]]; then
     echo "Apply requires a valid published --minimum-gas-prices value." >&2
     exit 1
   fi
-  if [[ "$COORDINATED_HARDFORK" == "true" ]]; then
+  if [[ "$COORDINATED_HARDFORK" == "true" && "$POST_HARDFORK_RECOVERY" == "true" ]]; then
+    echo "Choose either --coordinated-hardfork or --post-hardfork-recovery, not both." >&2
+    exit 1
+  fi
+  if [[ "$POST_HARDFORK_RECOVERY" == "true" ]]; then
+    canonical_status="$(curl -fsS --max-time 10 "${TRUSTED_RPC%/}/status")" || {
+      echo "Could not read trusted canonical RPC: $TRUSTED_RPC" >&2
+      exit 1
+    }
+    canonical_chain="$(jq -r '.result.node_info.network // empty' <<<"$canonical_status")"
+    canonical_height="$(jq -r '.result.sync_info.latest_block_height // "0"' <<<"$canonical_status")"
+    if [[ "$canonical_chain" != "$CHAIN_ID" || ! "$canonical_height" =~ ^[0-9]+$ || "$canonical_height" -lt "$UPGRADE_HEIGHT" ]]; then
+      echo "Trusted RPC has not reached $CHAIN_ID height $UPGRADE_HEIGHT (reported $canonical_chain height $canonical_height)." >&2
+      exit 1
+    fi
+    echo "Post-hardfork recovery authorized from canonical height $canonical_height."
+  elif [[ "$COORDINATED_HARDFORK" == "true" ]]; then
     if [[ "$LIVE_STATUS_AVAILABLE" != "true" ]]; then
       echo "A coordinated hard-fork replacement requires a responsive live node before activation." >&2
       exit 1
