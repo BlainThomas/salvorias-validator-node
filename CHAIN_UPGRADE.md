@@ -47,6 +47,7 @@ IMAGE_TARBALL_URL='<PUBLIC_RELEASE_TARBALL_URL>'
 IMAGE_TARBALL_SHA256='<IMAGE_TARBALL_SHA256>'
 BINARY_SHA256='<BINARY_SHA256>'
 UPGRADE_HEIGHT='<UPGRADE_HEIGHT>'
+MINIMUM_GAS_PRICES='1000000000SAVDR'
 
 sudo ./scripts/upgrade-validator.sh preflight \
   --image "$IMAGE" \
@@ -79,6 +80,7 @@ been reached. Then run:
 ```bash
 sudo ./scripts/upgrade-validator.sh apply \
   --upgrade-height "$UPGRADE_HEIGHT" \
+  --minimum-gas-prices "$MINIMUM_GAS_PRICES" \
   --image "$IMAGE" \
   --image-tarball-url "$IMAGE_TARBALL_URL" \
   --image-tarball-sha256 "$IMAGE_TARBALL_SHA256" \
@@ -91,6 +93,9 @@ against the same validator volume. It validates the chain ID, consensus
 address, validator key hash, node key hash, and container stability. If those
 checks fail, it automatically removes the replacement and restores the old
 container.
+
+The published minimum gas price is applied only to the replacement container.
+The retained rollback container keeps its original command unchanged.
 
 It is normal for the height to remain at the upgrade height until validators
 holding more than two-thirds of consensus power have installed the new image.

@@ -12,6 +12,7 @@ BINARY_SHA256="${UPGRADE_BINARY_SHA256:-}"
 IMAGE_TARBALL_URL="${UPGRADE_IMAGE_TARBALL_URL:-}"
 IMAGE_TARBALL_SHA256="${UPGRADE_IMAGE_TARBALL_SHA256:-}"
 UPGRADE_HEIGHT="${UPGRADE_HEIGHT:-}"
+MINIMUM_GAS_PRICES="${MINIMUM_GAS_PRICES:-}"
 CONTAINER_NAME="${CONTAINER_NAME:-}"
 BACKUP_ROOT="${BACKUP_ROOT:-/var/backups/salvorias-validator}"
 HOME_DIR="/home/evmos/.evmosd"
@@ -22,9 +23,9 @@ usage() {
   cat <<'EOF'
 Usage:
   sudo ./scripts/upgrade-validator.sh preflight --image IMAGE@sha256:DIGEST --binary-sha256 SHA256 [--container NAME]
-  sudo ./scripts/upgrade-validator.sh apply     --upgrade-height HEIGHT --image IMAGE@sha256:DIGEST --binary-sha256 SHA256 [--container NAME]
+  sudo ./scripts/upgrade-validator.sh apply     --upgrade-height HEIGHT --minimum-gas-prices PRICE --image IMAGE@sha256:DIGEST --binary-sha256 SHA256 [--container NAME]
   sudo ./scripts/upgrade-validator.sh preflight --image IMAGE_TAG --image-tarball-url URL --image-tarball-sha256 SHA256 --binary-sha256 SHA256
-  sudo ./scripts/upgrade-validator.sh apply     --upgrade-height HEIGHT --image IMAGE_TAG --image-tarball-url URL --image-tarball-sha256 SHA256 --binary-sha256 SHA256
+  sudo ./scripts/upgrade-validator.sh apply     --upgrade-height HEIGHT --minimum-gas-prices PRICE --image IMAGE_TAG --image-tarball-url URL --image-tarball-sha256 SHA256 --binary-sha256 SHA256
   sudo ./scripts/upgrade-validator.sh verify                                          [--container NAME]
 
 Use either a registry image pinned by digest or a public release tarball pinned
@@ -43,6 +44,7 @@ while [[ $# -gt 0 ]]; do
     --image-tarball-url) IMAGE_TARBALL_URL="$2"; shift 2 ;;
     --image-tarball-sha256) IMAGE_TARBALL_SHA256="$2"; shift 2 ;;
     --upgrade-height) UPGRADE_HEIGHT="$2"; shift 2 ;;
+    --minimum-gas-prices) MINIMUM_GAS_PRICES="$2"; shift 2 ;;
     --container) CONTAINER_NAME="$2"; shift 2 ;;
     --backup-root) BACKUP_ROOT="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -310,6 +312,28 @@ start_replacement() {
   for item in "${logs[@]}"; do args+=(--log-opt "$item"); done
 
   mapfile -t cmd < <(jq -r '.[0].Config.Cmd[]?' "$inspect_file")
+  if [[ -n "$MINIMUM_GAS_PRICES" ]]; then
+    local found_minimum_gas_prices=false index
+    for ((index=0; index<${#cmd[@]}; index++)); do
+      if [[ "${cmd[$index]}" == "--minimum-gas-prices" ]]; then
+        if (( index + 1 >= ${#cmd[@]} )); then
+          echo "Existing command has --minimum-gas-prices without a value." >&2
+          return 1
+        fi
+        cmd[$((index + 1))]="$MINIMUM_GAS_PRICES"
+        found_minimum_gas_prices=true
+        break
+      fi
+      if [[ "${cmd[$index]}" == --minimum-gas-prices=* ]]; then
+        cmd[$index]="--minimum-gas-prices=$MINIMUM_GAS_PRICES"
+        found_minimum_gas_prices=true
+        break
+      fi
+    done
+    if [[ "$found_minimum_gas_prices" != "true" ]]; then
+      cmd+=(--minimum-gas-prices "$MINIMUM_GAS_PRICES")
+    fi
+  fi
   "${args[@]}" "$IMAGE" "${cmd[@]}" >/dev/null
 }
 
@@ -331,6 +355,10 @@ fi
 if [[ "$MODE" == "apply" ]]; then
   if [[ ! "$UPGRADE_HEIGHT" =~ ^[0-9]+$ || "$UPGRADE_HEIGHT" -lt 1 ]]; then
     echo "Apply requires the published --upgrade-height HEIGHT." >&2
+    exit 1
+  fi
+  if [[ -z "$MINIMUM_GAS_PRICES" || ! "$MINIMUM_GAS_PRICES" =~ ^[0-9]+([.][0-9]+)?[A-Za-z][A-Za-z0-9/:._-]*$ ]]; then
+    echo "Apply requires a valid published --minimum-gas-prices value." >&2
     exit 1
   fi
   if (( HEIGHT < UPGRADE_HEIGHT )); then
@@ -408,6 +436,19 @@ if ! read_identity ||
   exit 1
 fi
 
+ACTIVE_MINIMUM_GAS_PRICES="$(docker inspect "$CONTAINER_NAME" | jq -r '
+  .[0].Config.Cmd as $cmd |
+  reduce range(0; $cmd | length) as $i ("";
+    if $cmd[$i] == "--minimum-gas-prices" then $cmd[$i + 1]
+    elif ($cmd[$i] | startswith("--minimum-gas-prices=")) then ($cmd[$i] | split("=")[1])
+    else . end)
+')"
+if [[ "$ACTIVE_MINIMUM_GAS_PRICES" != "$MINIMUM_GAS_PRICES" ]]; then
+  echo "Replacement minimum gas prices do not match the requested value." >&2
+  restore_old_container "$OLD_CONTAINER"
+  exit 1
+fi
+
 sleep 15
 if [[ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER_NAME")" != "true" ]]; then
   restore_old_container "$OLD_CONTAINER"
@@ -425,6 +466,7 @@ echo "  Chain:             $NETWORK"
 echo "  Height:            $HEIGHT"
 echo "  Catching up:       $CATCHING_UP"
 echo "  Validator address: $VALIDATOR_ADDRESS"
+echo "  Minimum gas price: $ACTIVE_MINIMUM_GAS_PRICES"
 echo "  Safety backup:     $BACKUP_DIR"
 echo
 echo "Keep the rollback container until the network has resumed and the team has completed post-upgrade validation."
