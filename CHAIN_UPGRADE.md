@@ -47,6 +47,7 @@ IMAGE_TARBALL_URL='<PUBLIC_RELEASE_TARBALL_URL>'
 IMAGE_TARBALL_SHA256='<IMAGE_TARBALL_SHA256>'
 BINARY_SHA256='<BINARY_SHA256>'
 UPGRADE_HEIGHT='<UPGRADE_HEIGHT>'
+UPGRADE_NAME='salvorias-policy-v1.1.0'
 MINIMUM_GAS_PRICES='1000000000SAVDR'
 
 sudo ./scripts/upgrade-validator.sh preflight \
@@ -79,6 +80,7 @@ been reached. Then run:
 
 ```bash
 sudo ./scripts/upgrade-validator.sh apply \
+  --upgrade-name "$UPGRADE_NAME" \
   --upgrade-height "$UPGRADE_HEIGHT" \
   --minimum-gas-prices "$MINIMUM_GAS_PRICES" \
   --image "$IMAGE" \
@@ -96,6 +98,12 @@ container.
 
 The published minimum gas price is applied only to the replacement container.
 The retained rollback container keeps its original command unchanged.
+
+If the old binary has already halted and its RPC is unavailable, apply verifies
+that `data/upgrade-info.json` exactly matches the published upgrade name and
+height, then reads the chain ID, consensus identity, and last signed height
+directly from the protected validator files. It will not replace a halted node
+for a different or missing upgrade plan.
 
 It is normal for the height to remain at the upgrade height until validators
 holding more than two-thirds of consensus power have installed the new image.

@@ -12,6 +12,7 @@ BINARY_SHA256="${UPGRADE_BINARY_SHA256:-}"
 IMAGE_TARBALL_URL="${UPGRADE_IMAGE_TARBALL_URL:-}"
 IMAGE_TARBALL_SHA256="${UPGRADE_IMAGE_TARBALL_SHA256:-}"
 UPGRADE_HEIGHT="${UPGRADE_HEIGHT:-}"
+UPGRADE_NAME="${UPGRADE_NAME:-}"
 MINIMUM_GAS_PRICES="${MINIMUM_GAS_PRICES:-}"
 CONTAINER_NAME="${CONTAINER_NAME:-}"
 BACKUP_ROOT="${BACKUP_ROOT:-/var/backups/salvorias-validator}"
@@ -23,9 +24,9 @@ usage() {
   cat <<'EOF'
 Usage:
   sudo ./scripts/upgrade-validator.sh preflight --image IMAGE@sha256:DIGEST --binary-sha256 SHA256 [--container NAME]
-  sudo ./scripts/upgrade-validator.sh apply     --upgrade-height HEIGHT --minimum-gas-prices PRICE --image IMAGE@sha256:DIGEST --binary-sha256 SHA256 [--container NAME]
+  sudo ./scripts/upgrade-validator.sh apply     --upgrade-name NAME --upgrade-height HEIGHT --minimum-gas-prices PRICE --image IMAGE@sha256:DIGEST --binary-sha256 SHA256 [--container NAME]
   sudo ./scripts/upgrade-validator.sh preflight --image IMAGE_TAG --image-tarball-url URL --image-tarball-sha256 SHA256 --binary-sha256 SHA256
-  sudo ./scripts/upgrade-validator.sh apply     --upgrade-height HEIGHT --minimum-gas-prices PRICE --image IMAGE_TAG --image-tarball-url URL --image-tarball-sha256 SHA256 --binary-sha256 SHA256
+  sudo ./scripts/upgrade-validator.sh apply     --upgrade-name NAME --upgrade-height HEIGHT --minimum-gas-prices PRICE --image IMAGE_TAG --image-tarball-url URL --image-tarball-sha256 SHA256 --binary-sha256 SHA256
   sudo ./scripts/upgrade-validator.sh verify                                          [--container NAME]
 
 Use either a registry image pinned by digest or a public release tarball pinned
@@ -44,6 +45,7 @@ while [[ $# -gt 0 ]]; do
     --image-tarball-url) IMAGE_TARBALL_URL="$2"; shift 2 ;;
     --image-tarball-sha256) IMAGE_TARBALL_SHA256="$2"; shift 2 ;;
     --upgrade-height) UPGRADE_HEIGHT="$2"; shift 2 ;;
+    --upgrade-name) UPGRADE_NAME="$2"; shift 2 ;;
     --minimum-gas-prices) MINIMUM_GAS_PRICES="$2"; shift 2 ;;
     --container) CONTAINER_NAME="$2"; shift 2 ;;
     --backup-root) BACKUP_ROOT="$2"; shift 2 ;;
@@ -96,12 +98,13 @@ container_status() {
 
 container_file_hash() {
   local path="$1"
-  docker exec "$CONTAINER_NAME" sh -lc "test -f '$path' && sha256sum '$path' | cut -d' ' -f1 || true"
+  docker exec "$CONTAINER_NAME" sh -lc "test -f '$path' && sha256sum '$path' | cut -d' ' -f1 || true" 2>/dev/null
 }
 
 read_identity() {
   local status
   status="$(container_status)"
+  [[ -n "$status" ]] || return 1
   STATUS_JSON="$status"
   NETWORK="$(jq -r '.node_info.network // empty' <<<"$status")"
   HEIGHT="$(jq -r '.sync_info.latest_block_height // "0"' <<<"$status")"
@@ -115,6 +118,40 @@ read_identity() {
   [[ "$NETWORK" == "$CHAIN_ID" ]] || { echo "Wrong chain: $NETWORK (expected $CHAIN_ID)" >&2; return 1; }
   [[ -n "$VALIDATOR_ADDRESS" && -n "$PRIVKEY_HASH" && -n "$NODEKEY_HASH" ]] || {
     echo "Could not read validator identity or key hashes." >&2
+    return 1
+  }
+}
+
+read_identity_offline() {
+  local key_file="$NODE_HOME_MOUNT_SOURCE/config/priv_validator_key.json"
+  local node_key_file="$NODE_HOME_MOUNT_SOURCE/config/node_key.json"
+  local genesis_file="$NODE_HOME_MOUNT_SOURCE/config/genesis.json"
+  local signing_file="$NODE_HOME_MOUNT_SOURCE/data/priv_validator_state.json"
+
+  STATUS_JSON='{}'
+  NETWORK="$(jq -r '.chain_id // empty' "$genesis_file")"
+  HEIGHT="$(jq -r '.height // "0"' "$signing_file")"
+  VALIDATOR_ADDRESS="$(jq -r '.address // empty' "$key_file")"
+  CATCHING_UP="unknown (old binary halted)"
+  BLOCK_TIME=""
+  PRIVKEY_HASH="$(sha256sum "$key_file" | cut -d' ' -f1)"
+  NODEKEY_HASH="$(sha256sum "$node_key_file" | cut -d' ' -f1)"
+  SIGNING_STATE_HASH="$(sha256sum "$signing_file" | cut -d' ' -f1)"
+
+  [[ "$NETWORK" == "$CHAIN_ID" ]] || { echo "Wrong offline chain: $NETWORK (expected $CHAIN_ID)" >&2; return 1; }
+  [[ "$HEIGHT" =~ ^[0-9]+$ && -n "$VALIDATOR_ADDRESS" && -n "$PRIVKEY_HASH" && -n "$NODEKEY_HASH" ]] || {
+    echo "Could not read offline validator height, identity, or key hashes." >&2
+    return 1
+  }
+}
+
+validate_halt_plan() {
+  local info_file="$NODE_HOME_MOUNT_SOURCE/data/upgrade-info.json"
+  [[ -f "$info_file" ]] || { echo "Missing on-disk upgrade plan: $info_file" >&2; return 1; }
+  jq -e --arg name "$UPGRADE_NAME" --argjson height "$UPGRADE_HEIGHT" '
+    .name == $name and (.height | tonumber) == $height
+  ' "$info_file" >/dev/null || {
+    echo "On-disk upgrade plan does not match $UPGRADE_NAME at height $UPGRADE_HEIGHT." >&2
     return 1
   }
 }
@@ -234,7 +271,11 @@ verify_upgrade_image() {
 print_preflight() {
   local current_image current_binary
   current_image="$(docker inspect -f '{{.Config.Image}}' "$CONTAINER_NAME")"
-  current_binary="$(docker exec "$CONTAINER_NAME" sh -lc 'sha256sum "$(command -v evmosd)" | cut -d" " -f1')"
+  if [[ "$LIVE_STATUS_AVAILABLE" == "true" ]]; then
+    current_binary="$(docker exec "$CONTAINER_NAME" sh -lc 'sha256sum "$(command -v evmosd)" | cut -d" " -f1')"
+  else
+    current_binary="$(docker run --rm --entrypoint sh "$current_image" -lc 'sha256sum "$(command -v evmosd)" | cut -d" " -f1')"
+  fi
   echo "Preflight passed"
   echo "  Container:         $CONTAINER_NAME"
   echo "  Current image:     $current_image"
@@ -337,8 +378,18 @@ start_replacement() {
   "${args[@]}" "$IMAGE" "${cmd[@]}" >/dev/null
 }
 
-read_identity
-validate_mount
+LIVE_STATUS_AVAILABLE=true
+if read_identity; then
+  validate_mount
+else
+  if [[ "$MODE" != "apply" ]]; then
+    echo "Validator RPC is unavailable; live status is required for $MODE." >&2
+    exit 1
+  fi
+  LIVE_STATUS_AVAILABLE=false
+  validate_mount
+  read_identity_offline
+fi
 
 if [[ "$MODE" == "preflight" ]]; then
   block_epoch="$(date -d "$BLOCK_TIME" +%s 2>/dev/null || echo 0)"
@@ -357,11 +408,19 @@ if [[ "$MODE" == "apply" ]]; then
     echo "Apply requires the published --upgrade-height HEIGHT." >&2
     exit 1
   fi
+  if [[ -z "$UPGRADE_NAME" ]]; then
+    echo "Apply requires the published --upgrade-name NAME." >&2
+    exit 1
+  fi
   if [[ -z "$MINIMUM_GAS_PRICES" || ! "$MINIMUM_GAS_PRICES" =~ ^[0-9]+([.][0-9]+)?[A-Za-z][A-Za-z0-9/:._-]*$ ]]; then
     echo "Apply requires a valid published --minimum-gas-prices value." >&2
     exit 1
   fi
-  if (( HEIGHT < UPGRADE_HEIGHT )); then
+  if [[ "$LIVE_STATUS_AVAILABLE" != "true" ]]; then
+    validate_halt_plan
+  fi
+  if (( HEIGHT < UPGRADE_HEIGHT )) &&
+     ! { [[ "$LIVE_STATUS_AVAILABLE" != "true" ]] && (( HEIGHT + 1 == UPGRADE_HEIGHT )); }; then
     echo "Refusing early apply: current height $HEIGHT is below upgrade height $UPGRADE_HEIGHT." >&2
     exit 1
   fi
