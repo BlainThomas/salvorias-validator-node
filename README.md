@@ -11,6 +11,10 @@ It does three things:
 
 No mnemonic is committed or stored in this repo.
 
+For coordinated mainnet binary upgrades, use the checksum-pinned, key-safe
+procedure in [CHAIN_UPGRADE.md](CHAIN_UPGRADE.md). Do not rerun onboarding or
+state-sync reset during an upgrade.
+
 ## Requirements
 
 - Ubuntu/Debian server with root access. The onboarding script installs Docker, `curl`, and `jq` if they are missing.
