@@ -1,0 +1,11 @@
+[Unit]
+Description=Salvorias read RPC canonical health watchdog
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/salvorias-rpc-watchdog.env
+ExecStart=/usr/local/bin/salvorias-rpc-watchdog.sh
+
