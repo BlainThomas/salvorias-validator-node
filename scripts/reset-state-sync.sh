@@ -105,9 +105,9 @@ docker exec "$SETUP_CONTAINER" sh -lc "
   mkdir -p '$HOME_DIR/data'
   cat > '$HOME_DIR/data/priv_validator_state.json' <<'JSON'
 {
-  "height": "0",
-  "round": 0,
-  "step": 0
+  \"height\": \"0\",
+  \"round\": 0,
+  \"step\": 0
 }
 JSON
 
