@@ -14,6 +14,7 @@ IMAGE_TARBALL_SHA256="${UPGRADE_IMAGE_TARBALL_SHA256:-}"
 UPGRADE_HEIGHT="${UPGRADE_HEIGHT:-}"
 UPGRADE_NAME="${UPGRADE_NAME:-}"
 MINIMUM_GAS_PRICES="${MINIMUM_GAS_PRICES:-}"
+COORDINATED_HARDFORK="${COORDINATED_HARDFORK:-false}"
 CONTAINER_NAME="${CONTAINER_NAME:-}"
 BACKUP_ROOT="${BACKUP_ROOT:-/var/backups/salvorias-validator}"
 HOME_DIR="/home/evmos/.evmosd"
@@ -25,6 +26,7 @@ usage() {
 Usage:
   sudo ./scripts/upgrade-validator.sh preflight --image IMAGE@sha256:DIGEST --binary-sha256 SHA256 [--container NAME]
   sudo ./scripts/upgrade-validator.sh apply     --upgrade-name NAME --upgrade-height HEIGHT --minimum-gas-prices PRICE --image IMAGE@sha256:DIGEST --binary-sha256 SHA256 [--container NAME]
+  sudo ./scripts/upgrade-validator.sh apply     --coordinated-hardfork --upgrade-name NAME --upgrade-height HEIGHT --minimum-gas-prices PRICE --image IMAGE_TAG --image-tarball-url URL --image-tarball-sha256 SHA256 --binary-sha256 SHA256
   sudo ./scripts/upgrade-validator.sh preflight --image IMAGE_TAG --image-tarball-url URL --image-tarball-sha256 SHA256 --binary-sha256 SHA256
   sudo ./scripts/upgrade-validator.sh apply     --upgrade-name NAME --upgrade-height HEIGHT --minimum-gas-prices PRICE --image IMAGE_TAG --image-tarball-url URL --image-tarball-sha256 SHA256 --binary-sha256 SHA256
   sudo ./scripts/upgrade-validator.sh verify                                          [--container NAME]
@@ -47,6 +49,7 @@ while [[ $# -gt 0 ]]; do
     --upgrade-height) UPGRADE_HEIGHT="$2"; shift 2 ;;
     --upgrade-name) UPGRADE_NAME="$2"; shift 2 ;;
     --minimum-gas-prices) MINIMUM_GAS_PRICES="$2"; shift 2 ;;
+    --coordinated-hardfork) COORDINATED_HARDFORK=true; shift ;;
     --container) CONTAINER_NAME="$2"; shift 2 ;;
     --backup-root) BACKUP_ROOT="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
@@ -416,13 +419,24 @@ if [[ "$MODE" == "apply" ]]; then
     echo "Apply requires a valid published --minimum-gas-prices value." >&2
     exit 1
   fi
-  if [[ "$LIVE_STATUS_AVAILABLE" != "true" ]]; then
-    validate_halt_plan
-  fi
-  if (( HEIGHT < UPGRADE_HEIGHT )) &&
-     ! { [[ "$LIVE_STATUS_AVAILABLE" != "true" ]] && (( HEIGHT + 1 == UPGRADE_HEIGHT )); }; then
-    echo "Refusing early apply: current height $HEIGHT is below upgrade height $UPGRADE_HEIGHT." >&2
-    exit 1
+  if [[ "$COORDINATED_HARDFORK" == "true" ]]; then
+    if [[ "$LIVE_STATUS_AVAILABLE" != "true" ]]; then
+      echo "A coordinated hard-fork replacement requires a responsive live node before activation." >&2
+      exit 1
+    fi
+    if (( HEIGHT >= UPGRADE_HEIGHT || HEIGHT + 1000 < UPGRADE_HEIGHT )); then
+      echo "Coordinated hard-fork apply is allowed only within 1,000 blocks before height $UPGRADE_HEIGHT (current $HEIGHT)." >&2
+      exit 1
+    fi
+  else
+    if [[ "$LIVE_STATUS_AVAILABLE" != "true" ]]; then
+      validate_halt_plan
+    fi
+    if (( HEIGHT < UPGRADE_HEIGHT )) &&
+       ! { [[ "$LIVE_STATUS_AVAILABLE" != "true" ]] && (( HEIGHT + 1 == UPGRADE_HEIGHT )); }; then
+      echo "Refusing early apply: current height $HEIGHT is below upgrade height $UPGRADE_HEIGHT." >&2
+      exit 1
+    fi
   fi
 fi
 

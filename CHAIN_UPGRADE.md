@@ -108,6 +108,27 @@ for a different or missing upgrade plan.
 It is normal for the height to remain at the upgrade height until validators
 holding more than two-thirds of consensus power have installed the new image.
 
+### Coordinated hard-fork activation
+
+If the release announcement explicitly identifies a coordinated hard fork,
+apply the new binary during the final 1,000 blocks before its activation height:
+
+```bash
+sudo ./scripts/upgrade-validator.sh apply \
+  --coordinated-hardfork \
+  --upgrade-name "$UPGRADE_NAME" \
+  --upgrade-height "$UPGRADE_HEIGHT" \
+  --minimum-gas-prices "$MINIMUM_GAS_PRICES" \
+  --image "$IMAGE" \
+  --image-tarball-url "$IMAGE_TARBALL_URL" \
+  --image-tarball-sha256 "$IMAGE_TARBALL_SHA256" \
+  --binary-sha256 "$BINARY_SHA256"
+```
+
+This mode requires the old validator to be live and current. It refuses to run
+more than 1,000 blocks early or at/after activation. The policy transition remains
+dormant in the new binary until the exact activation height.
+
 ## 4. Verify after the network resumes
 
 ```bash
