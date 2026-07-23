@@ -77,6 +77,19 @@ Do not run `reset-state-sync.sh` after the validator is active unless the
 Salvorias operator team explicitly tells you to. The watchdog only restarts the
 container; it does not wipe chain data or reset validator signing state.
 
+If an upgraded validator is halted by a verified
+`wrong Block.Header.AppHash` error, use the operator-authorized recovery wrapper
+instead. It installs the checksum-pinned production image, rebuilds canonical
+chain data, and preserves the consensus key, node key, account keyring, and
+last-signing state:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/NodeSolutionsAI/salvorias-validator-node/main/scripts/recover-divergent-validator.sh \
+  | sudo bash
+```
+
+Do not unjail the validator until `catching_up` is `false`.
+
 ## Activate Validator
 
 After the account is funded and whitelisted:
