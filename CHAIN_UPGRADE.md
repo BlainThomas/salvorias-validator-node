@@ -129,6 +129,25 @@ This mode requires the old validator to be live and current. It refuses to run
 more than 1,000 blocks early or at/after activation. The policy transition remains
 dormant in the new binary until the exact activation height.
 
+### Upgrade public RPC relays before activation
+
+Any non-validator node that accepts `eth_sendRawTransaction` must run the same
+policy binary before the activation height. Transaction admission (`CheckTx`) is
+performed by the RPC node before a transaction is relayed to validators. An old
+read-RPC binary can therefore reject a transaction that the upgraded validator
+set would accept, even though the read node does not participate in consensus.
+
+For each public or internal broadcast RPC:
+
+1. Load and checksum-verify the same pinned release artifact.
+2. Preserve its existing data volume, command arguments, ports, and recovery
+   watchdog configuration.
+3. Replace the container with the new image and retain the stopped old container
+   as rollback.
+4. Verify it is healthy, not catching up, and matches the canonical block hash.
+5. Send the post-activation transaction through the public endpoint itself; a
+   direct validator-RPC test does not validate the production broadcast path.
+
 ### Validator missed the coordinated activation
 
 If a validator did not install the release before activation, stop it and wait
