@@ -10,7 +10,7 @@ readonly HOME_DIR="/home/evmos/.evmosd"
 readonly CHAIN_ID="salvorias_7282-1"
 readonly TRUSTED_RPC="http://134.199.216.166:26660"
 readonly CURRENT_IMAGE="ghcr.io/nodesolutionsai/salvorias-validator-node:policy-v1.1.3"
-readonly PERSISTENT_PEERS="bc9decb51c24982322c756b7c9a0c837ed7a7216@134.199.216.166:26656,2dc40ecb6939882984604f6a1158ab0fbc7bca92@45.32.198.24:26656"
+readonly RECOVERY_PEERS="bc9decb51c24982322c756b7c9a0c837ed7a7216@134.199.216.166:26656,2dc40ecb6939882984604f6a1158ab0fbc7bca92@45.32.198.24:26656"
 readonly PUBLIC_REF="agent/divergent-validator-recovery"
 readonly PUBLIC_RAW_BASE="https://raw.githubusercontent.com/BlainThomas/salvorias-validator-node/$PUBLIC_REF"
 readonly UPGRADE_SCRIPT_URL="$PUBLIC_RAW_BASE/scripts/upgrade-validator.sh"
@@ -102,6 +102,7 @@ finish() {
     systemctl start salvorias-validator-watchdog.timer 2>/dev/null || true
   fi
   if [[ "$recovery_complete" != "true" ]]; then
+    docker stop "$CONTAINER_NAME" >/dev/null 2>&1 || true
     echo "Recovery stopped safely. Validator backup: $backup_dir" >&2
     echo "Leave the validator stopped and contact the operator team with the error above." >&2
   fi
@@ -110,26 +111,33 @@ trap finish EXIT
 
 docker stop "$CONTAINER_NAME" >/dev/null 2>&1 || true
 
-curl -fsSL "$UPGRADE_SCRIPT_URL" -o /tmp/salvorias-upgrade-validator.sh
-chmod 0700 /tmp/salvorias-upgrade-validator.sh
-/tmp/salvorias-upgrade-validator.sh apply \
-  --post-hardfork-recovery \
-  --trusted-rpc "$TRUSTED_RPC" \
-  --upgrade-name salvorias-fee-exemption-v1.1.3 \
-  --upgrade-height 2009500 \
-  --minimum-gas-prices 1000000000SAVDR \
-  --image "$CURRENT_IMAGE" \
-  --image-tarball-url "$RELEASE_URL" \
-  --image-tarball-sha256 "$RELEASE_SHA256" \
-  --binary-sha256 "$BINARY_SHA256"
+installed_image="$(docker inspect -f '{{.Config.Image}}' "$CONTAINER_NAME")"
+installed_binary="$(docker run --rm --entrypoint sh "$installed_image" -lc 'sha256sum "$(command -v evmosd)" | cut -d" " -f1')"
+if [[ "$installed_image" == "$CURRENT_IMAGE" && "${installed_binary,,}" == "${BINARY_SHA256,,}" ]]; then
+  echo "Current policy-v1.1.3 image and binary already verified; skipping the completed upgrade."
+else
+  curl -fsSL "$UPGRADE_SCRIPT_URL" -o /tmp/salvorias-upgrade-validator.sh
+  chmod 0700 /tmp/salvorias-upgrade-validator.sh
+  /tmp/salvorias-upgrade-validator.sh apply \
+    --post-hardfork-recovery \
+    --trusted-rpc "$TRUSTED_RPC" \
+    --upgrade-name salvorias-fee-exemption-v1.1.3 \
+    --upgrade-height 2009500 \
+    --minimum-gas-prices 1000000000SAVDR \
+    --image "$CURRENT_IMAGE" \
+    --image-tarball-url "$RELEASE_URL" \
+    --image-tarball-sha256 "$RELEASE_SHA256" \
+    --binary-sha256 "$BINARY_SHA256"
+fi
 
 curl -fsSL "$STATE_SYNC_SCRIPT_URL" -o /tmp/salvorias-reset-state-sync.sh
 chmod 0700 /tmp/salvorias-reset-state-sync.sh
-STATE_SYNC_RPC="$TRUSTED_RPC" \
-PERSISTENT_PEERS="$PERSISTENT_PEERS" \
-CONTAINER_NAME="$CONTAINER_NAME" \
-VOLUME_NAME="$node_home_mount" \
-IMAGE="$CURRENT_IMAGE" \
+env \
+  STATE_SYNC_RPC="$TRUSTED_RPC" \
+  PERSISTENT_PEERS="$RECOVERY_PEERS" \
+  CONTAINER_NAME="$CONTAINER_NAME" \
+  VOLUME_NAME="$node_home_mount" \
+  IMAGE="$CURRENT_IMAGE" \
   /tmp/salvorias-reset-state-sync.sh
 
 # reset-state-sync intentionally initializes a new signer state for fresh
