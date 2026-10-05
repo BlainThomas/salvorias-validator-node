@@ -16,6 +16,7 @@ UPGRADE_NAME="${UPGRADE_NAME:-}"
 MINIMUM_GAS_PRICES="${MINIMUM_GAS_PRICES:-}"
 COORDINATED_HARDFORK="${COORDINATED_HARDFORK:-false}"
 POST_HARDFORK_RECOVERY="${POST_HARDFORK_RECOVERY:-false}"
+HARDEN_RPC="${HARDEN_RPC:-false}"
 TRUSTED_RPC="${TRUSTED_RPC:-http://134.199.216.166:26660}"
 CONTAINER_NAME="${CONTAINER_NAME:-}"
 BACKUP_ROOT="${BACKUP_ROOT:-/var/backups/salvorias-validator}"
@@ -30,6 +31,7 @@ Usage:
   sudo ./scripts/upgrade-validator.sh apply     --upgrade-name NAME --upgrade-height HEIGHT --minimum-gas-prices PRICE --image IMAGE@sha256:DIGEST --binary-sha256 SHA256 [--container NAME]
   sudo ./scripts/upgrade-validator.sh apply     --coordinated-hardfork --upgrade-name NAME --upgrade-height HEIGHT --minimum-gas-prices PRICE --image IMAGE_TAG --image-tarball-url URL --image-tarball-sha256 SHA256 --binary-sha256 SHA256
   sudo ./scripts/upgrade-validator.sh apply     --post-hardfork-recovery --trusted-rpc URL --upgrade-name NAME --upgrade-height HEIGHT --minimum-gas-prices PRICE --image IMAGE_TAG --image-tarball-url URL --image-tarball-sha256 SHA256 --binary-sha256 SHA256
+  sudo ./scripts/upgrade-validator.sh apply     --harden-rpc --upgrade-name NAME --upgrade-height HEIGHT --minimum-gas-prices PRICE --image IMAGE_TAG --image-tarball-url URL --image-tarball-sha256 SHA256 --binary-sha256 SHA256
   sudo ./scripts/upgrade-validator.sh preflight --image IMAGE_TAG --image-tarball-url URL --image-tarball-sha256 SHA256 --binary-sha256 SHA256
   sudo ./scripts/upgrade-validator.sh apply     --upgrade-name NAME --upgrade-height HEIGHT --minimum-gas-prices PRICE --image IMAGE_TAG --image-tarball-url URL --image-tarball-sha256 SHA256 --binary-sha256 SHA256
   sudo ./scripts/upgrade-validator.sh verify                                          [--container NAME]
@@ -54,6 +56,7 @@ while [[ $# -gt 0 ]]; do
     --minimum-gas-prices) MINIMUM_GAS_PRICES="$2"; shift 2 ;;
     --coordinated-hardfork) COORDINATED_HARDFORK=true; shift ;;
     --post-hardfork-recovery) POST_HARDFORK_RECOVERY=true; shift ;;
+    --harden-rpc) HARDEN_RPC=true; shift ;;
     --trusted-rpc) TRUSTED_RPC="$2"; shift 2 ;;
     --container) CONTAINER_NAME="$2"; shift 2 ;;
     --backup-root) BACKUP_ROOT="$2"; shift 2 ;;
@@ -313,6 +316,10 @@ restore_old_container() {
   local old_name="$1"
   echo "New container did not pass validation; restoring $old_name." >&2
   docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+  if [[ "$HARDEN_RPC" == "true" && -n "${BACKUP_DIR:-}" ]]; then
+    tar -xzf "$BACKUP_DIR/validator-safety-backup.tgz" \
+      -C "$NODE_HOME_MOUNT_SOURCE" config/app.toml
+  fi
   docker rename "$old_name" "$CONTAINER_NAME"
   docker start "$CONTAINER_NAME" >/dev/null
   if [[ "${watchdog_was_active:-false}" == "true" ]] && command -v systemctl >/dev/null 2>&1; then
@@ -349,6 +356,11 @@ start_replacement() {
   for item in "${ports[@]}"; do
     local port host_ip host_port spec
     IFS='|' read -r port host_ip host_port <<<"$item"
+    if [[ "$HARDEN_RPC" == "true" ]]; then
+      case "$port" in
+        26657/tcp|1317/tcp|8545/tcp|8546/tcp|9090/tcp) host_ip=127.0.0.1 ;;
+      esac
+    fi
     spec="$host_port:$port"
     [[ -z "$host_ip" ]] || spec="$host_ip:$spec"
     args+=(--publish "$spec")
@@ -384,6 +396,50 @@ start_replacement() {
     fi
   fi
   "${args[@]}" "$IMAGE" "${cmd[@]}" >/dev/null
+}
+
+harden_rpc_config() {
+  local app_toml="$NODE_HOME_MOUNT_SOURCE/config/app.toml"
+  [[ -f "$app_toml" ]] || { echo "Missing validator app.toml: $app_toml" >&2; return 1; }
+
+  sed -i.bak \
+    -e '/^\[json-rpc\]/,/^\[/ s|^api = .*|api = "eth,net,web3"|' \
+    -e '/^\[json-rpc\]/,/^\[/ s|^allow-insecure-unlock = .*|allow-insecure-unlock = false|' \
+    "$app_toml"
+
+  awk '
+    /^\[json-rpc\]$/ { active=1; next }
+    /^\[/ { active=0 }
+    active && /^api = "eth,net,web3"$/ { safe_api=1 }
+    active && /^allow-insecure-unlock = false$/ { safe_unlock=1 }
+    END { exit !(safe_api && safe_unlock) }
+  ' "$app_toml" || {
+    echo "Could not enforce safe JSON-RPC settings." >&2
+    return 1
+  }
+  rm -f "$app_toml.bak"
+}
+
+verify_rpc_hardening() {
+  local bindings app_toml
+  bindings="$(docker inspect "$CONTAINER_NAME" --format '{{json .HostConfig.PortBindings}}')"
+  for port in 26657/tcp 1317/tcp 8545/tcp 8546/tcp 9090/tcp; do
+    if jq -e --arg port "$port" '
+      (.[$port] // []) | any((.HostIp // "") != "127.0.0.1" and (.HostIp // "") != "::1")
+    ' <<<"$bindings" >/dev/null; then
+      echo "Sensitive RPC port $port is not loopback-only after replacement." >&2
+      return 1
+    fi
+  done
+
+  app_toml="$(docker exec "$CONTAINER_NAME" sh -lc "cat '$HOME_DIR/config/app.toml'")"
+  awk '
+    /^\[json-rpc\]$/ { active=1; next }
+    /^\[/ { active=0 }
+    active && /^api = "eth,net,web3"$/ { safe_api=1 }
+    active && /^allow-insecure-unlock = false$/ { safe_unlock=1 }
+    END { exit !(safe_api && safe_unlock) }
+  ' <<<"$app_toml"
 }
 
 LIVE_STATUS_AVAILABLE=true
@@ -511,6 +567,11 @@ if ! docker rename "$CONTAINER_NAME" "$OLD_CONTAINER"; then
   exit 1
 fi
 
+if [[ "$HARDEN_RPC" == "true" ]] && ! harden_rpc_config; then
+  restore_old_container "$OLD_CONTAINER"
+  exit 1
+fi
+
 if ! start_replacement "$BACKUP_DIR/container-inspect.json"; then
   restore_old_container "$OLD_CONTAINER"
   exit 1
@@ -543,6 +604,12 @@ if [[ "$ACTIVE_MINIMUM_GAS_PRICES" != "$MINIMUM_GAS_PRICES" ]]; then
   exit 1
 fi
 
+if [[ "$HARDEN_RPC" == "true" ]] && ! verify_rpc_hardening; then
+  echo "Replacement RPC hardening validation failed." >&2
+  restore_old_container "$OLD_CONTAINER"
+  exit 1
+fi
+
 sleep 15
 if [[ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER_NAME")" != "true" ]]; then
   restore_old_container "$OLD_CONTAINER"
@@ -561,6 +628,7 @@ echo "  Height:            $HEIGHT"
 echo "  Catching up:       $CATCHING_UP"
 echo "  Validator address: $VALIDATOR_ADDRESS"
 echo "  Minimum gas price: $ACTIVE_MINIMUM_GAS_PRICES"
+echo "  RPC hardening:     $HARDEN_RPC"
 echo "  Safety backup:     $BACKUP_DIR"
 echo
 echo "Keep the rollback container until the network has resumed and the team has completed post-upgrade validation."

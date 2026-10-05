@@ -5,6 +5,33 @@ release announcement will provide either an immutable image digest or a public
 release tarball with its SHA-256, plus the binary SHA-256 and upgrade height.
 Do not substitute an unverified artifact.
 
+For the `salvorias-security-v1.2.0` release, use the manifest-driven wrapper
+below. It selects the correct Linux architecture, verifies the published
+manifest and image checksums, applies loopback-only RPC publication, disables
+insecure account unlock, and delegates the key-safe replacement to the standard
+updater.
+
+## Security v1.2.0 operator command
+
+The formal announcement will replace `OPERATOR_COMMIT`, `MANIFEST_URL`,
+`MANIFEST_SHA256`, and `UPGRADE_HEIGHT`. Do not guess any value.
+
+Safe preflight while the validator is running:
+
+```bash
+cd ~/salvorias-validator-node && git fetch origin OPERATOR_COMMIT && git checkout --detach OPERATOR_COMMIT && sudo ./scripts/run-security-upgrade.sh preflight --manifest-url MANIFEST_URL --manifest-sha256 MANIFEST_SHA256
+```
+
+Single apply command after the announced upgrade height is reached:
+
+```bash
+cd ~/salvorias-validator-node && git fetch origin OPERATOR_COMMIT && git checkout --detach OPERATOR_COMMIT && sudo ./scripts/run-security-upgrade.sh apply --manifest-url MANIFEST_URL --manifest-sha256 MANIFEST_SHA256 --upgrade-height UPGRADE_HEIGHT --yes
+```
+
+The wrapper refuses non-HTTPS manifests, a checksum mismatch, an unexpected
+upgrade name, an unsupported CPU architecture, an unconfirmed apply, or a
+missing/invalid height.
+
 ## What the updater preserves
 
 - The existing Docker volume or bind mount at `/home/evmos/.evmosd`.
