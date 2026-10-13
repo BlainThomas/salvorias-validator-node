@@ -109,6 +109,10 @@ height, then reads the chain ID, consensus identity, and last signed height
 directly from the protected validator files. It will not replace a halted node
 for a different or missing upgrade plan.
 
+If RPC is still live, normal apply instead verifies that the chain's scheduled
+upgrade plan has that same name and height. It will not replace a live node
+merely because a height was supplied on the command line.
+
 It is normal for the height to remain at the upgrade height until validators
 holding more than two-thirds of consensus power have installed the new image.
 

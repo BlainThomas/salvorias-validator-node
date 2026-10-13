@@ -164,6 +164,21 @@ validate_halt_plan() {
   }
 }
 
+validate_live_plan() {
+  local plan
+  plan="$(docker exec "$CONTAINER_NAME" evmosd query upgrade plan \
+    --home "$HOME_DIR" --node tcp://127.0.0.1:26657 -o json 2>/dev/null)" || {
+    echo "Could not read the live chain upgrade plan." >&2
+    return 1
+  }
+  jq -e --arg name "$UPGRADE_NAME" --argjson height "$UPGRADE_HEIGHT" '
+    .plan.name == $name and (.plan.height | tonumber) == $height
+  ' <<<"$plan" >/dev/null || {
+    echo "Live chain upgrade plan does not match $UPGRADE_NAME at height $UPGRADE_HEIGHT." >&2
+    return 1
+  }
+}
+
 node_home_mount() {
   docker inspect "$CONTAINER_NAME" | jq -r --arg home "$HOME_DIR" '
     .[0].Mounts[] | select(.Destination == $home) |
@@ -461,7 +476,9 @@ if [[ "$MODE" == "apply" ]]; then
       exit 1
     fi
   else
-    if [[ "$LIVE_STATUS_AVAILABLE" != "true" ]]; then
+    if [[ "$LIVE_STATUS_AVAILABLE" == "true" ]]; then
+      validate_live_plan
+    else
       validate_halt_plan
     fi
     if (( HEIGHT < UPGRADE_HEIGHT )) &&
