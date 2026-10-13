@@ -38,11 +38,13 @@ chmod +x scripts/*.sh
 
 ## 2. Preflight before the upgrade height
 
-The public GitHub Release tarball is the default distribution path. Replace all
-four published placeholders exactly:
+The public GitHub Release tarball is the default distribution path. Copy the
+image tag and checksums from the release manifest exactly; the image tag inside
+the tarball is not necessarily a GHCR registry tag. Replace all published
+placeholders exactly:
 
 ```bash
-IMAGE='ghcr.io/nodesolutionsai/salvorias-validator-node:<VERSION>'
+IMAGE='<IMAGE_TAG_FROM_RELEASE_MANIFEST>'
 IMAGE_TARBALL_URL='<PUBLIC_RELEASE_TARBALL_URL>'
 IMAGE_TARBALL_SHA256='<IMAGE_TARBALL_SHA256>'
 BINARY_SHA256='<BINARY_SHA256>'
