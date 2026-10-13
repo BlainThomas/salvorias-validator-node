@@ -190,6 +190,10 @@ sudo ./scripts/upgrade-validator.sh verify
 docker logs --tail 100 salvorias-validator 2>&1 | tail -100
 ```
 
+Verify fails if RPC is unavailable or the latest block is more than three
+minutes old; a current block with `catching_up=true` is reported as a warning
+for the operator to investigate.
+
 For the original validator, substitute its container name when viewing logs:
 
 ```bash

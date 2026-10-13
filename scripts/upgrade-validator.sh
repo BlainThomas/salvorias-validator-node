@@ -410,11 +410,11 @@ else
   read_identity_offline
 fi
 
-if [[ "$MODE" == "preflight" ]]; then
+if [[ "$MODE" == "preflight" || "$MODE" == "verify" ]]; then
   block_epoch="$(date -d "$BLOCK_TIME" +%s 2>/dev/null || echo 0)"
   block_age=$(( $(date +%s) - block_epoch ))
   if (( block_epoch == 0 || block_age > 180 )); then
-    echo "Latest block is too old for safe preflight: $BLOCK_TIME" >&2
+    echo "Latest block is too old for safe $MODE: $BLOCK_TIME" >&2
     exit 1
   fi
   if [[ "$CATCHING_UP" != "false" ]]; then
