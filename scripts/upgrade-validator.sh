@@ -320,6 +320,17 @@ restore_old_container() {
   fi
 }
 
+quarantine_replacement() {
+  local old_name="$1"
+  echo "Replacement did not pass validation after startup; stopping it without restarting the old binary." >&2
+  echo "The new binary may have migrated chain state. Do not start $old_name against this volume without operator review." >&2
+  docker update --restart no "$CONTAINER_NAME" >/dev/null 2>&1 || true
+  docker stop --time 30 "$CONTAINER_NAME" >/dev/null 2>&1 || true
+  echo "Retained replacement: $CONTAINER_NAME" >&2
+  echo "Retained old container: $old_name" >&2
+  echo "Safety backup: $BACKUP_DIR" >&2
+}
+
 start_replacement() {
   local inspect_file="$1"
   local -a args cmd envs mounts ports logs
@@ -517,7 +528,7 @@ if ! start_replacement "$BACKUP_DIR/container-inspect.json"; then
 fi
 
 if ! wait_for_rpc; then
-  restore_old_container "$OLD_CONTAINER"
+  quarantine_replacement "$OLD_CONTAINER"
   exit 1
 fi
 
@@ -526,7 +537,7 @@ if ! read_identity ||
    [[ "$PRIVKEY_HASH" != "$BASE_PRIVKEY_HASH" ]] ||
    [[ "$NODEKEY_HASH" != "$BASE_NODEKEY_HASH" ]]; then
   echo "Validator identity changed after replacement." >&2
-  restore_old_container "$OLD_CONTAINER"
+  quarantine_replacement "$OLD_CONTAINER"
   exit 1
 fi
 
@@ -539,13 +550,13 @@ ACTIVE_MINIMUM_GAS_PRICES="$(docker inspect "$CONTAINER_NAME" | jq -r '
 ')"
 if [[ "$ACTIVE_MINIMUM_GAS_PRICES" != "$MINIMUM_GAS_PRICES" ]]; then
   echo "Replacement minimum gas prices do not match the requested value." >&2
-  restore_old_container "$OLD_CONTAINER"
+  quarantine_replacement "$OLD_CONTAINER"
   exit 1
 fi
 
 sleep 15
 if [[ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER_NAME")" != "true" ]]; then
-  restore_old_container "$OLD_CONTAINER"
+  quarantine_replacement "$OLD_CONTAINER"
   exit 1
 fi
 

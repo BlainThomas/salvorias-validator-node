@@ -92,9 +92,11 @@ sudo ./scripts/upgrade-validator.sh apply \
 Apply repeats preflight, stops the old container, creates a final signing-state
 backup, renames the stopped old container, and starts the new immutable image
 against the same validator volume. It validates the chain ID, consensus
-address, validator key hash, node key hash, and container stability. If those
-checks fail, it automatically removes the replacement and restores the old
-container.
+address, validator key hash, node key hash, and container stability. If the
+replacement fails before it starts, the updater restores the old container.
+If validation fails after the replacement starts, the updater stops it and
+retains both containers for operator review. It does not automatically start
+the old binary against potentially migrated state.
 
 The published minimum gas price is applied only to the replacement container.
 The retained rollback container keeps its original command unchanged.
@@ -208,10 +210,12 @@ The old stopped container is retained as
 until the operator team confirms the network migration and post-upgrade tests
 are complete.
 
-Automatic rollback is safe before the upgraded network begins committing
-post-migration blocks. After the network resumes on the new version, do not
-manually start the old binary unless the operator team explicitly coordinates
-a network-wide rollback.
+If replacement creation fails before the new binary starts, the script restores
+the old container. Once the new binary has started, treat its volume as
+potentially migrated even if RPC never became healthy. Do not manually start
+the old binary unless the operator team verifies the state and explicitly
+coordinates a rollback. After the network resumes on the new version, any
+rollback must be network-wide.
 
 ## Never do these during an upgrade
 
