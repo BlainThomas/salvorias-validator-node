@@ -117,7 +117,7 @@ read_identity() {
   NETWORK="$(jq -r '.node_info.network // empty' <<<"$status")"
   HEIGHT="$(jq -r '.sync_info.latest_block_height // "0"' <<<"$status")"
   VALIDATOR_ADDRESS="$(jq -r '.validator_info.address // empty' <<<"$status")"
-  CATCHING_UP="$(jq -r '.sync_info.catching_up // true' <<<"$status")"
+  CATCHING_UP="$(jq -r 'if .sync_info.catching_up == null then true else .sync_info.catching_up end' <<<"$status")"
   BLOCK_TIME="$(jq -r '.sync_info.latest_block_time // empty' <<<"$status")"
   PRIVKEY_HASH="$(container_file_hash "$HOME_DIR/config/priv_validator_key.json")"
   NODEKEY_HASH="$(container_file_hash "$HOME_DIR/config/node_key.json")"

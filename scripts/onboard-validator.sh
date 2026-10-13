@@ -137,7 +137,9 @@ echo " State sync:    $STATE_SYNC_RPC"
 echo " Log cap:       ${LOG_MAX_FILE} files x ${LOG_MAX_SIZE}"
 echo
 
-if ! docker pull "$IMAGE"; then
+if docker image inspect "$IMAGE" >/dev/null 2>&1; then
+  echo "Using local Docker image: $IMAGE"
+elif ! docker pull "$IMAGE"; then
   echo
   echo "Docker registry pull failed for $IMAGE."
   echo "Falling back to release image tarball:"
@@ -257,6 +259,8 @@ docker exec "$SETUP_CONTAINER" sh -lc "
   sed -i '/^\\[statesync\\]/,/^\\[/ s|^discovery_time = .*|discovery_time = \"'$STATE_SYNC_DISCOVERY_TIME'\"|' \"\$CFG\"
 
   sed -i 's|^minimum-gas-prices = .*|minimum-gas-prices = \"0'$DENOM'\"|' \"\$APP\"
+  sed -i 's|^api = .*|api = \"eth,net,web3\"|' \"\$APP\"
+  sed -i 's|^allow-insecure-unlock = true|allow-insecure-unlock = false|' \"\$APP\"
   sed -i '/^\\[api\\]/,/^\\[/ s|^enable = .*|enable = true|' \"\$APP\"
   sed -i '/^\\[api\\]/,/^\\[/ s|^swagger = .*|swagger = true|' \"\$APP\"
   sed -i '/^\\[rosetta\\]/,/^\\[/ s|^enable = .*|enable = false|' \"\$APP\"

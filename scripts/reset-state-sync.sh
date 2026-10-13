@@ -103,13 +103,11 @@ docker exec "$SETUP_CONTAINER" sh -lc "
 
   rm -rf '$HOME_DIR/data'
   mkdir -p '$HOME_DIR/data'
-  cat > '$HOME_DIR/data/priv_validator_state.json' <<'JSON'
-{
-  "height": "0",
-  "round": 0,
-  "step": 0
-}
-JSON
+  # Keep the JSON opaque to this nested shell. Literal quotes in a heredoc are
+  # otherwise consumed by the outer nested shell string before the inner shell
+  # writes the file, producing invalid JSON and preventing the node from booting.
+  printf '%s' 'eyJoZWlnaHQiOiIwIiwicm91bmQiOjAsInN0ZXAiOjB9Cg==' |
+    base64 -d > '$HOME_DIR/data/priv_validator_state.json'
 
   sed -i 's|^persistent_peers = .*|persistent_peers = \"'$PERSISTENT_PEERS'\"|' \"\$CFG\"
   sed -i 's|^addr_book_strict = .*|addr_book_strict = false|' \"\$CFG\"
