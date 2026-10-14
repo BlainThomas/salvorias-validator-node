@@ -36,6 +36,7 @@ chmod +x scripts/*.sh
 ./scripts/onboard-validator.sh \
   --moniker "SaveMarket" \
   --external-ip "YOUR_SERVER_PUBLIC_IP" \
+  --image "ghcr.io/nodesolutionsai/salvorias-validator-node@sha256:PUBLISHED_DIGEST" \
   --force
 ```
 
@@ -106,7 +107,7 @@ The self-delegation amount is in base units. `1000000000000000000` equals
 - Native denom: `SAVDR`
 - Container name: `salvorias-validator`
 - Docker volume: `salvorias-validator-data`
-- Image: `ghcr.io/nodesolutionsai/salvorias-validator-node:latest`
+- Image: an operator-published immutable `IMAGE@sha256:DIGEST` reference
 - State sync RPC: `http://134.199.216.166:26660`
 - Persistent peers: production public peers only; stale private or jailed node
   peers are intentionally excluded by default.
@@ -159,10 +160,12 @@ docker exec salvorias-validator evmosd keys show validator \
 For maintainers:
 
 ```bash
-./scripts/publish-image.sh
+TARGET_IMAGE=ghcr.io/nodesolutionsai/salvorias-validator-node:<VERSION> \
+  ./scripts/publish-image.sh
 ```
 
-This tags the local production image as `ghcr.io/nodesolutionsai/salvorias-validator-node:latest` and pushes it to GitHub Container Registry.
+The publisher refuses the mutable `latest` tag. Record the digest returned by
+the registry and use that immutable reference in operator instructions.
 
 ## Local Smoke Test With Alternate Ports
 

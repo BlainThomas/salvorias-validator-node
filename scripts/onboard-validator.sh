@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-IMAGE="${IMAGE:-ghcr.io/nodesolutionsai/salvorias-validator-node:latest}"
-IMAGE_TARBALL_URL="${IMAGE_TARBALL_URL:-https://github.com/NodeSolutionsAI/salvorias-validator-node/releases/latest/download/salvorias-validator-node-latest.tar.gz}"
+IMAGE="${IMAGE:-}"
+IMAGE_TARBALL_URL="${IMAGE_TARBALL_URL:-}"
+IMAGE_TARBALL_SHA256="${IMAGE_TARBALL_SHA256:-}"
 DOCKER_PLATFORM="${DOCKER_PLATFORM:-linux/amd64}"
 CONTAINER_NAME="${CONTAINER_NAME:-salvorias-validator}"
 VOLUME_NAME="${VOLUME_NAME:-salvorias-validator-data}"
@@ -10,6 +11,7 @@ KEY_NAME="${KEY_NAME:-validator}"
 CHAIN_ID="${CHAIN_ID:-salvorias_7282-1}"
 EVM_CHAIN_ID="${EVM_CHAIN_ID:-7282}"
 DENOM="${DENOM:-SAVDR}"
+MINIMUM_GAS_PRICES="${MINIMUM_GAS_PRICES:-1000000000SAVDR}"
 STATE_SYNC_RPC="${STATE_SYNC_RPC:-http://134.199.216.166:26660}"
 PERSISTENT_PEERS="${PERSISTENT_PEERS:-bc9decb51c24982322c756b7c9a0c837ed7a7216@134.199.216.166:26656,7883bda6e4de7db2b7056ead781a0a6383bd31c8@45.32.168.97:26656,e870477adf4f8b7a35c86d9910409482a573bfbb@149.28.244.23:26656,eb33b07b52618fce53f755aac07337e8a8c91a2e@64.177.113.190:26656,f2d72c52432db11bdbe02e6c14726a06def0de2e@147.182.223.228:26656}"
 TRUST_OFFSET="${TRUST_OFFSET:-2000}"
@@ -31,6 +33,10 @@ MNEMONIC=""
 MNEMONIC_FILE=""
 FORCE="false"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/lib/security-guards.sh
+source "$SCRIPT_DIR/lib/security-guards.sh"
+
 usage() {
   cat <<EOF
 Usage: $0 --moniker NAME --external-ip IP [options]
@@ -40,7 +46,7 @@ Options:
   --external-ip IP        Public IP advertised for P2P.
   --mnemonic-file PATH    Read validator mnemonic from file.
   --mnemonic "WORDS"      Pass mnemonic directly. Prefer --mnemonic-file or prompt.
-  --image IMAGE           Docker image. Default: $IMAGE
+  --image IMAGE           Immutable Docker image reference ending in @sha256:...
   --force                 Remove existing container before starting.
   -h, --help              Show this help.
 EOF
@@ -106,6 +112,8 @@ ensure_docker() {
 ensure_base_packages
 ensure_docker
 
+validate_onboarding_security_inputs "$IMAGE" "$HOST_LOCAL_BIND" "$IMAGE_TARBALL_URL" "$IMAGE_TARBALL_SHA256"
+
 if [[ -z "$MONIKER" ]]; then
   read -r -p "Validator moniker: " MONIKER
 fi
@@ -133,6 +141,7 @@ echo " External IP:   $EXTERNAL_IP"
 echo " Image:         $IMAGE"
 echo " Chain ID:      $CHAIN_ID"
 echo " Native denom:  $DENOM"
+echo " Min gas price: $MINIMUM_GAS_PRICES"
 echo " State sync:    $STATE_SYNC_RPC"
 echo " Log cap:       ${LOG_MAX_FILE} files x ${LOG_MAX_SIZE}"
 echo
@@ -144,6 +153,7 @@ if ! docker pull "$IMAGE"; then
   echo "  $IMAGE_TARBALL_URL"
   TMP_IMAGE="$(mktemp -t salvorias-validator-image.XXXXXX.tar.gz)"
   curl -fL --retry 3 --retry-delay 3 -o "$TMP_IMAGE" "$IMAGE_TARBALL_URL"
+  verify_sha256 "$TMP_IMAGE" "$IMAGE_TARBALL_SHA256"
   docker load -i "$TMP_IMAGE"
   rm -f "$TMP_IMAGE"
 fi
@@ -256,10 +266,20 @@ docker exec "$SETUP_CONTAINER" sh -lc "
   sed -i '/^\\[statesync\\]/,/^\\[/ s|^trust_period = .*|trust_period = \"168h0m0s\"|' \"\$CFG\"
   sed -i '/^\\[statesync\\]/,/^\\[/ s|^discovery_time = .*|discovery_time = \"'$STATE_SYNC_DISCOVERY_TIME'\"|' \"\$CFG\"
 
-  sed -i 's|^minimum-gas-prices = .*|minimum-gas-prices = \"0'$DENOM'\"|' \"\$APP\"
+  sed -i 's|^minimum-gas-prices = .*|minimum-gas-prices = \"'$MINIMUM_GAS_PRICES'\"|' \"\$APP\"
   sed -i '/^\\[api\\]/,/^\\[/ s|^enable = .*|enable = true|' \"\$APP\"
   sed -i '/^\\[api\\]/,/^\\[/ s|^swagger = .*|swagger = true|' \"\$APP\"
   sed -i '/^\\[rosetta\\]/,/^\\[/ s|^enable = .*|enable = false|' \"\$APP\"
+  sed -i '/^\\[json-rpc\\]/,/^\\[/ s|^api = .*|api = \"eth,net,web3\"|' \"\$APP\"
+  sed -i '/^\\[json-rpc\\]/,/^\\[/ s|^allow-insecure-unlock = .*|allow-insecure-unlock = false|' \"\$APP\"
+
+  awk '
+    /^\\[json-rpc\\]\$/ { in_json_rpc=1; next }
+    /^\\[/ { in_json_rpc=0 }
+    in_json_rpc && /^api = \"eth,net,web3\"\$/ { safe_api=1 }
+    in_json_rpc && /^allow-insecure-unlock = false\$/ { safe_unlock=1 }
+    END { exit !(safe_api && safe_unlock) }
+  ' \"\$APP\"
 "
 
 echo "Starting validator container..."
@@ -284,7 +304,7 @@ docker run -d \
   "$IMAGE" evmosd start \
     --home "$HOME_DIR" \
     --chain-id "$CHAIN_ID" \
-    --minimum-gas-prices "0${DENOM}" \
+    --minimum-gas-prices "$MINIMUM_GAS_PRICES" \
     --rpc.laddr tcp://0.0.0.0:26657 \
     --p2p.laddr tcp://0.0.0.0:26656 \
     --json-rpc.enable \

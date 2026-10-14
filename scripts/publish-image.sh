@@ -2,7 +2,12 @@
 set -euo pipefail
 
 SOURCE_IMAGE="${SOURCE_IMAGE:-salvorias-chain:savdr-prod-candidate}"
-TARGET_IMAGE="${TARGET_IMAGE:-ghcr.io/nodesolutionsai/salvorias-validator-node:latest}"
+TARGET_IMAGE="${TARGET_IMAGE:-}"
+
+if [[ -z "$TARGET_IMAGE" || "$TARGET_IMAGE" == *:latest ]]; then
+  echo "Set TARGET_IMAGE to an explicit version tag; publishing latest is refused." >&2
+  exit 1
+fi
 
 echo "Publishing validator image"
 echo "  Source: $SOURCE_IMAGE"

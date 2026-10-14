@@ -15,7 +15,11 @@ UPGRADE_HEIGHT="${UPGRADE_HEIGHT:-}"
 UPGRADE_NAME="${UPGRADE_NAME:-}"
 MINIMUM_GAS_PRICES="${MINIMUM_GAS_PRICES:-}"
 COORDINATED_HARDFORK="${COORDINATED_HARDFORK:-false}"
+FIXED_HEIGHT=false
+CANDIDATE_STARTED=false
+ORIGINAL_RESTART=""
 POST_HARDFORK_RECOVERY="${POST_HARDFORK_RECOVERY:-false}"
+HARDEN_RPC="${HARDEN_RPC:-false}"
 TRUSTED_RPC="${TRUSTED_RPC:-http://134.199.216.166:26660}"
 CONTAINER_NAME="${CONTAINER_NAME:-}"
 BACKUP_ROOT="${BACKUP_ROOT:-/var/backups/salvorias-validator}"
@@ -26,10 +30,12 @@ START_TIMEOUT="${START_TIMEOUT:-120}"
 usage() {
   cat <<'EOF'
 Usage:
+  sudo ./scripts/upgrade-validator.sh apply     --fixed-height --upgrade-name NAME --upgrade-height HEIGHT --minimum-gas-prices PRICE --image IMAGE@sha256:DIGEST --binary-sha256 SHA256 [--container NAME]
   sudo ./scripts/upgrade-validator.sh preflight --image IMAGE@sha256:DIGEST --binary-sha256 SHA256 [--container NAME]
   sudo ./scripts/upgrade-validator.sh apply     --upgrade-name NAME --upgrade-height HEIGHT --minimum-gas-prices PRICE --image IMAGE@sha256:DIGEST --binary-sha256 SHA256 [--container NAME]
   sudo ./scripts/upgrade-validator.sh apply     --coordinated-hardfork --upgrade-name NAME --upgrade-height HEIGHT --minimum-gas-prices PRICE --image IMAGE_TAG --image-tarball-url URL --image-tarball-sha256 SHA256 --binary-sha256 SHA256
   sudo ./scripts/upgrade-validator.sh apply     --post-hardfork-recovery --trusted-rpc URL --upgrade-name NAME --upgrade-height HEIGHT --minimum-gas-prices PRICE --image IMAGE_TAG --image-tarball-url URL --image-tarball-sha256 SHA256 --binary-sha256 SHA256
+  sudo ./scripts/upgrade-validator.sh apply     --harden-rpc --upgrade-name NAME --upgrade-height HEIGHT --minimum-gas-prices PRICE --image IMAGE_TAG --image-tarball-url URL --image-tarball-sha256 SHA256 --binary-sha256 SHA256
   sudo ./scripts/upgrade-validator.sh preflight --image IMAGE_TAG --image-tarball-url URL --image-tarball-sha256 SHA256 --binary-sha256 SHA256
   sudo ./scripts/upgrade-validator.sh apply     --upgrade-name NAME --upgrade-height HEIGHT --minimum-gas-prices PRICE --image IMAGE_TAG --image-tarball-url URL --image-tarball-sha256 SHA256 --binary-sha256 SHA256
   sudo ./scripts/upgrade-validator.sh verify                                          [--container NAME]
@@ -40,6 +46,12 @@ configuration, and signing state without stopping the node. Apply repeats that
 backup after stopping the old container, retains the old container under a
 timestamped name, starts the new image against the same persistent volume, and
 automatically rolls back if identity/startup checks fail.
+
+For the security fixed-height release, --fixed-height is required. It arms
+the OLD binary's halt-height, waits for the exact committed boundary, and only
+then starts the candidate. Once the candidate starts, failure leaves both
+containers stopped for operator review; it NEVER automatically downgrades.
+Keep this process running (e.g. in a root tmux session) until completion.
 EOF
 }
 
@@ -53,7 +65,9 @@ while [[ $# -gt 0 ]]; do
     --upgrade-name) UPGRADE_NAME="$2"; shift 2 ;;
     --minimum-gas-prices) MINIMUM_GAS_PRICES="$2"; shift 2 ;;
     --coordinated-hardfork) COORDINATED_HARDFORK=true; shift ;;
+    --fixed-height) FIXED_HEIGHT=true; shift ;;
     --post-hardfork-recovery) POST_HARDFORK_RECOVERY=true; shift ;;
+    --harden-rpc) HARDEN_RPC=true; shift ;;
     --trusted-rpc) TRUSTED_RPC="$2"; shift 2 ;;
     --container) CONTAINER_NAME="$2"; shift 2 ;;
     --backup-root) BACKUP_ROOT="$2"; shift 2 ;;
@@ -72,7 +86,7 @@ if [[ "$(id -u)" -ne 0 ]]; then
   exit 1
 fi
 
-for command in curl docker jq sha256sum tar; do
+for command in curl docker jq sha256sum tar flock; do
   command -v "$command" >/dev/null 2>&1 || { echo "Missing required command: $command" >&2; exit 1; }
 done
 
@@ -99,9 +113,16 @@ detect_container() {
 
 detect_container
 docker container inspect "$CONTAINER_NAME" >/dev/null
+[[ "$CONTAINER_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || exit 1
+exec 9>"/run/lock/salvorias-upgrade-$CONTAINER_NAME.lock"
+flock -n 9 || { echo "Another upgrade process holds this validator's lock." >&2; exit 1; }
 
 container_status() {
   docker exec "$CONTAINER_NAME" evmosd status 2>/dev/null
+}
+
+container_app_info() {
+  docker exec "$CONTAINER_NAME" curl -fsS --max-time 10 http://127.0.0.1:26657/abci_info
 }
 
 container_file_hash() {
@@ -116,8 +137,9 @@ read_identity() {
   STATUS_JSON="$status"
   NETWORK="$(jq -r '.node_info.network // empty' <<<"$status")"
   HEIGHT="$(jq -r '.sync_info.latest_block_height // "0"' <<<"$status")"
+  APPLICATION_HEIGHT="$(container_app_info | jq -er '.result.response.last_block_height | tonumber')" || return 1
   VALIDATOR_ADDRESS="$(jq -r '.validator_info.address // empty' <<<"$status")"
-  CATCHING_UP="$(jq -r '.sync_info.catching_up // true' <<<"$status")"
+  CATCHING_UP="$(jq -r '.sync_info.catching_up' <<<"$status")"
   BLOCK_TIME="$(jq -r '.sync_info.latest_block_time // empty' <<<"$status")"
   PRIVKEY_HASH="$(container_file_hash "$HOME_DIR/config/priv_validator_key.json")"
   NODEKEY_HASH="$(container_file_hash "$HOME_DIR/config/node_key.json")"
@@ -139,6 +161,7 @@ read_identity_offline() {
   STATUS_JSON='{}'
   NETWORK="$(jq -r '.chain_id // empty' "$genesis_file")"
   HEIGHT="$(jq -r '.height // "0"' "$signing_file")"
+  APPLICATION_HEIGHT="unknown (requires offline inspection)"
   VALIDATOR_ADDRESS="$(jq -r '.address // empty' "$key_file")"
   CATCHING_UP="unknown (old binary halted)"
   BLOCK_TIME=""
@@ -292,6 +315,7 @@ print_preflight() {
   echo "  Upgrade binary:    $BINARY_SHA256"
   echo "  Chain:             $NETWORK"
   echo "  Height:            $HEIGHT"
+  echo "  Application height: $APPLICATION_HEIGHT"
   echo "  Catching up:       $CATCHING_UP"
   echo "  Validator address: $VALIDATOR_ADDRESS"
   echo "  Node home:         $NODE_HOME_MOUNT_TYPE:$NODE_HOME_MOUNT_SOURCE"
@@ -311,8 +335,19 @@ wait_for_rpc() {
 
 restore_old_container() {
   local old_name="$1"
+  if [[ "$FIXED_HEIGHT" == "true" && "$CANDIDATE_STARTED" == "true" ]]; then
+    docker update --restart=no "$CONTAINER_NAME" >/dev/null 2>&1 || true
+    docker stop --time 60 "$CONTAINER_NAME" >/dev/null 2>&1 || true
+    docker update --restart=no "$old_name" >/dev/null 2>&1 || true
+    echo "Candidate failed validation. Both containers left stopped; automatic downgrade after activation is forbidden. Contact operators. Backup: $BACKUP_DIR" >&2
+    return 0
+  fi
   echo "New container did not pass validation; restoring $old_name." >&2
   docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+  if [[ "$HARDEN_RPC" == "true" && -n "${BACKUP_DIR:-}" ]]; then
+    tar -xzf "$BACKUP_DIR/validator-safety-backup.tgz" \
+      -C "$NODE_HOME_MOUNT_SOURCE" config/app.toml
+  fi
   docker rename "$old_name" "$CONTAINER_NAME"
   docker start "$CONTAINER_NAME" >/dev/null
   if [[ "${watchdog_was_active:-false}" == "true" ]] && command -v systemctl >/dev/null 2>&1; then
@@ -325,10 +360,14 @@ start_replacement() {
   local -a args cmd envs mounts ports logs
   local restart network user
   restart="$(jq -r '.[0].HostConfig.RestartPolicy.Name // "no"' "$inspect_file")"
+  [[ "$FIXED_HEIGHT" != "true" ]] || restart="$ORIGINAL_RESTART"
   network="$(jq -r '.[0].HostConfig.NetworkMode // "default"' "$inspect_file")"
   user="$(jq -r '.[0].Config.User // empty' "$inspect_file")"
 
   args=(docker run -d --name "$CONTAINER_NAME" --restart "$restart" --network "$network")
+  local static_ip
+  static_ip="$(jq -r --arg network "$network" '.[0].NetworkSettings.Networks[$network].IPAMConfig.IPv4Address // empty' "$inspect_file")"
+  [[ -z "$static_ip" ]] || args+=(--ip "$static_ip")
   [[ -z "$user" ]] || args+=(--user "$user")
 
   mapfile -t envs < <(jq -r '.[0].Config.Env[]?' "$inspect_file")
@@ -349,6 +388,11 @@ start_replacement() {
   for item in "${ports[@]}"; do
     local port host_ip host_port spec
     IFS='|' read -r port host_ip host_port <<<"$item"
+    if [[ "$HARDEN_RPC" == "true" ]]; then
+      case "$port" in
+        26657/tcp|1317/tcp|8545/tcp|8546/tcp|9090/tcp) host_ip=127.0.0.1 ;;
+      esac
+    fi
     spec="$host_port:$port"
     [[ -z "$host_ip" ]] || spec="$host_ip:$spec"
     args+=(--publish "$spec")
@@ -361,6 +405,11 @@ start_replacement() {
   for item in "${logs[@]}"; do args+=(--log-opt "$item"); done
 
   mapfile -t cmd < <(jq -r '.[0].Config.Cmd[]?' "$inspect_file")
+  # Older QA/validator images used evmosd directly as ENTRYPOINT. The reviewed
+  # security image has a permissions wrapper and expects evmosd in its CMD.
+  if [[ "$FIXED_HEIGHT" == "true" && "${cmd[0]:-}" == "start" ]]; then
+    cmd=(evmosd "${cmd[@]}")
+  fi
   if [[ -n "$MINIMUM_GAS_PRICES" ]]; then
     local found_minimum_gas_prices=false index
     for ((index=0; index<${#cmd[@]}; index++)); do
@@ -384,6 +433,50 @@ start_replacement() {
     fi
   fi
   "${args[@]}" "$IMAGE" "${cmd[@]}" >/dev/null
+}
+
+harden_rpc_config() {
+  local app_toml="$NODE_HOME_MOUNT_SOURCE/config/app.toml"
+  [[ -f "$app_toml" ]] || { echo "Missing validator app.toml: $app_toml" >&2; return 1; }
+
+  sed -i.bak \
+    -e '/^\[json-rpc\]/,/^\[/ s|^api = .*|api = "eth,net,web3"|' \
+    -e '/^\[json-rpc\]/,/^\[/ s|^allow-insecure-unlock = .*|allow-insecure-unlock = false|' \
+    "$app_toml"
+
+  awk '
+    /^\[json-rpc\]$/ { active=1; next }
+    /^\[/ { active=0 }
+    active && /^api = "eth,net,web3"$/ { safe_api=1 }
+    active && /^allow-insecure-unlock = false$/ { safe_unlock=1 }
+    END { exit !(safe_api && safe_unlock) }
+  ' "$app_toml" || {
+    echo "Could not enforce safe JSON-RPC settings." >&2
+    return 1
+  }
+  rm -f "$app_toml.bak"
+}
+
+verify_rpc_hardening() {
+  local bindings app_toml
+  bindings="$(docker inspect "$CONTAINER_NAME" --format '{{json .HostConfig.PortBindings}}')"
+  for port in 26657/tcp 1317/tcp 8545/tcp 8546/tcp 9090/tcp; do
+    if jq -e --arg port "$port" '
+      (.[$port] // []) | any((.HostIp // "") != "127.0.0.1" and (.HostIp // "") != "::1")
+    ' <<<"$bindings" >/dev/null; then
+      echo "Sensitive RPC port $port is not loopback-only after replacement." >&2
+      return 1
+    fi
+  done
+
+  app_toml="$(docker exec "$CONTAINER_NAME" sh -lc "cat '$HOME_DIR/config/app.toml'")"
+  awk '
+    /^\[json-rpc\]$/ { active=1; next }
+    /^\[/ { active=0 }
+    active && /^api = "eth,net,web3"$/ { safe_api=1 }
+    active && /^allow-insecure-unlock = false$/ { safe_unlock=1 }
+    END { exit !(safe_api && safe_unlock) }
+  ' <<<"$app_toml"
 }
 
 LIVE_STATUS_AVAILABLE=true
@@ -424,11 +517,37 @@ if [[ "$MODE" == "apply" ]]; then
     echo "Apply requires a valid published --minimum-gas-prices value." >&2
     exit 1
   fi
+  if [[ "$UPGRADE_NAME" == "salvorias-security-v1.2.0" && "$FIXED_HEIGHT" != "true" ]]; then
+    echo "This security release requires --fixed-height; legacy early/recovery modes are not safe." >&2
+    exit 1
+  fi
+  if [[ "$FIXED_HEIGHT" == "true" && ( "$COORDINATED_HARDFORK" == "true" || "$POST_HARDFORK_RECOVERY" == "true" ) ]]; then
+    echo "--fixed-height cannot be combined with legacy hard-fork modes." >&2
+    exit 1
+  fi
   if [[ "$COORDINATED_HARDFORK" == "true" && "$POST_HARDFORK_RECOVERY" == "true" ]]; then
     echo "Choose either --coordinated-hardfork or --post-hardfork-recovery, not both." >&2
     exit 1
   fi
-  if [[ "$POST_HARDFORK_RECOVERY" == "true" ]]; then
+  if [[ "$FIXED_HEIGHT" == "true" ]]; then
+    if [[ "$LIVE_STATUS_AVAILABLE" == "true" ]] && (( APPLICATION_HEIGHT >= UPGRADE_HEIGHT )); then
+      echo "Live node has already reached activation height; refusing to stop it or reapply. Use verify." >&2
+      exit 1
+    fi
+    if [[ "$LIVE_STATUS_AVAILABLE" == "true" ]]; then
+      current_plan="$(docker exec "$CONTAINER_NAME" evmosd query upgrade plan --output json)"
+      if ! jq -e 'type == "object" and (.plan == null)' <<<"$current_plan" >/dev/null; then
+        echo "An on-chain upgrade plan exists or could not be verified; refusing coordinated activation." >&2
+        exit 1
+      fi
+    fi
+    # The authoritative committed height is checked offline after stopping.
+    # Signing state alone is NOT a committed application height.
+    if docker inspect "$CONTAINER_NAME" | jq -e '.[0] | any(.Config.Cmd[]?; startswith("--halt-height") or startswith("--halt-time")) or any(.Config.Env[]?; test("HALT_(HEIGHT|TIME)="))' >/dev/null; then
+      echo "Explicit halt CLI/environment settings need operator review before fixed-height scheduling." >&2
+      exit 1
+    fi
+  elif [[ "$POST_HARDFORK_RECOVERY" == "true" ]]; then
     canonical_status="$(curl -fsS --max-time 10 "${TRUSTED_RPC%/}/status")" || {
       echo "Could not read trusted canonical RPC: $TRUSTED_RPC" >&2
       exit 1
@@ -485,32 +604,107 @@ BASE_PRIVKEY_HASH="$PRIVKEY_HASH"
 BASE_NODEKEY_HASH="$NODEKEY_HASH"
 
 watchdog_was_active=false
-if command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet salvorias-validator-watchdog.timer; then
+if [[ "$CONTAINER_NAME" == "salvorias-validator" || "$CONTAINER_NAME" == "salvorias-droplet" ]] &&
+   command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet salvorias-validator-watchdog.timer; then
   watchdog_was_active=true
   systemctl stop salvorias-validator-watchdog.timer
 fi
 
 echo "Stopping $CONTAINER_NAME for the upgrade..."
+if [[ "$FIXED_HEIGHT" == "true" ]]; then
+  restart_record="$BACKUP_ROOT/fixed-height-$CONTAINER_NAME-$UPGRADE_HEIGHT.json"
+  if [[ -e "$restart_record" ]]; then
+    ORIGINAL_RESTART="$(jq -er --arg chain "$CHAIN_ID" --arg image "$(docker inspect -f '{{.Image}}' "$CONTAINER_NAME")" 'select(.chain == $chain and .old_image == $image) | .restart' "$restart_record")"
+  else
+    ORIGINAL_RESTART="$(docker inspect -f '{{.HostConfig.RestartPolicy.Name}}' "$CONTAINER_NAME")"
+    jq -n --arg chain "$CHAIN_ID" --arg image "$(docker inspect -f '{{.Image}}' "$CONTAINER_NAME")" --arg restart "$ORIGINAL_RESTART" \
+      '{chain:$chain,old_image:$image,restart:$restart}' > "$restart_record"
+    chmod 0600 "$restart_record"
+  fi
+  docker update --restart=no "$CONTAINER_NAME" >/dev/null
+fi
 docker stop --time 60 "$CONTAINER_NAME" >/dev/null
 if ! validate_mount; then
+  [[ "$FIXED_HEIGHT" != "true" ]] || { echo "Mount validation failed; left stopped for review." >&2; exit 1; }
   docker start "$CONTAINER_NAME" >/dev/null
   [[ "$watchdog_was_active" != "true" ]] || systemctl start salvorias-validator-watchdog.timer
   exit 1
 fi
 SIGNING_STATE_HASH="$(test -f "$NODE_HOME_MOUNT_SOURCE/data/priv_validator_state.json" && sha256sum "$NODE_HOME_MOUNT_SOURCE/data/priv_validator_state.json" | cut -d' ' -f1 || true)"
 if ! backup_node stopped; then
+  [[ "$FIXED_HEIGHT" != "true" ]] || { echo "Backup failed; left stopped for review." >&2; exit 1; }
   docker start "$CONTAINER_NAME" >/dev/null
   [[ "$watchdog_was_active" != "true" ]] || systemctl start salvorias-validator-watchdog.timer
   exit 1
+fi
+
+if [[ "$FIXED_HEIGHT" == "true" ]]; then
+  # Read the committed application height, never the last signing height.
+  # Export only gov state to avoid serializing the large EVM store.
+  fixed_next_height() {
+    # The verified candidate is an OFFLINE reader only here: export does not
+    # start consensus or run PreBlocker. Old releases have a broken export CLI.
+    local db_owner
+    db_owner="$(stat -c '%u:%g' "$NODE_HOME_MOUNT_SOURCE/data/application.db")"
+    docker run --rm --network none --user "$db_owner" --entrypoint evmosd \
+      --volume "$NODE_HOME_MOUNT_SOURCE:$HOME_DIR" "$IMAGE" \
+      export --home "$HOME_DIR" --chain-id "$CHAIN_ID" --modules-to-export gov \
+      2>"$BACKUP_DIR/height-export.log" | jq -er '.initial_height | tonumber'
+  }
+  set_fixed_halt() {
+    local height="$1" file="$NODE_HOME_MOUNT_SOURCE/config/app.toml"
+    # Replace only the top-level key and preserve mode/owner via in-place edit.
+    if [[ "$(grep -c '^halt-height = ' "$file")" != "1" ]]; then
+      echo "Expected exactly one top-level halt-height setting." >&2; return 1
+    fi
+    sed -i "s/^halt-height = .*/halt-height = $height/" "$file"
+  }
+  NEXT_HEIGHT="$(fixed_next_height)"
+  if (( NEXT_HEIGHT > UPGRADE_HEIGHT )); then
+    echo "Old application has already executed activation height. Leave stopped; coordinated recovery required." >&2
+    exit 1
+  fi
+  if (( NEXT_HEIGHT < UPGRADE_HEIGHT )); then
+    set_fixed_halt "$((UPGRADE_HEIGHT - 1))"
+    docker start "$CONTAINER_NAME" >/dev/null
+    echo "Old binary will halt after $((UPGRADE_HEIGHT - 1)); waiting for exact handoff. Do not start the candidate early."
+    # A disconnected operator terminal leaves the old binary's halt guard in place.
+    while [[ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER_NAME")" == "true" ]]; do
+      if state="$(container_app_info)"; then
+        observed="$(jq -er '.result.response.last_block_height | tonumber' <<<"$state")"
+        if (( observed >= UPGRADE_HEIGHT - 1 )); then break; fi
+      fi
+      sleep 2
+    done
+    docker stop --time 60 "$CONTAINER_NAME" >/dev/null
+    NEXT_HEIGHT="$(fixed_next_height)"
+  fi
+  if (( NEXT_HEIGHT != UPGRADE_HEIGHT )); then
+    echo "Not at the exact committed boundary (next=$NEXT_HEIGHT expected=$UPGRADE_HEIGHT). Left stopped; investigate before retry." >&2
+    exit 1
+  fi
+  # Take a new backup AFTER the final old-binary block, retaining signing state.
+  read_identity_offline
+  backup_node boundary
 fi
 
 OLD_CONTAINER="$CONTAINER_NAME-preupgrade-$(date -u +%Y%m%dT%H%M%SZ)"
 if ! docker rename "$CONTAINER_NAME" "$OLD_CONTAINER"; then
+  [[ "$FIXED_HEIGHT" != "true" ]] || { echo "Rename failed; old binary remains halted." >&2; exit 1; }
   docker start "$CONTAINER_NAME" >/dev/null
   [[ "$watchdog_was_active" != "true" ]] || systemctl start salvorias-validator-watchdog.timer
   exit 1
 fi
 
+if [[ "$HARDEN_RPC" == "true" ]] && ! harden_rpc_config; then
+  restore_old_container "$OLD_CONTAINER"
+  exit 1
+fi
+
+if [[ "$FIXED_HEIGHT" == "true" ]]; then
+  set_fixed_halt 0
+fi
+CANDIDATE_STARTED=true
 if ! start_replacement "$BACKUP_DIR/container-inspect.json"; then
   restore_old_container "$OLD_CONTAINER"
   exit 1
@@ -543,6 +737,12 @@ if [[ "$ACTIVE_MINIMUM_GAS_PRICES" != "$MINIMUM_GAS_PRICES" ]]; then
   exit 1
 fi
 
+if [[ "$HARDEN_RPC" == "true" ]] && ! verify_rpc_hardening; then
+  echo "Replacement RPC hardening validation failed." >&2
+  restore_old_container "$OLD_CONTAINER"
+  exit 1
+fi
+
 sleep 15
 if [[ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER_NAME")" != "true" ]]; then
   restore_old_container "$OLD_CONTAINER"
@@ -561,6 +761,10 @@ echo "  Height:            $HEIGHT"
 echo "  Catching up:       $CATCHING_UP"
 echo "  Validator address: $VALIDATOR_ADDRESS"
 echo "  Minimum gas price: $ACTIVE_MINIMUM_GAS_PRICES"
+echo "  RPC hardening:     $HARDEN_RPC"
 echo "  Safety backup:     $BACKUP_DIR"
 echo
 echo "Keep the rollback container until the network has resumed and the team has completed post-upgrade validation."
+if [[ "$FIXED_HEIGHT" == "true" ]]; then
+  echo "DO NOT restart the retained old container or restore an older signing-state file after activation."
+fi

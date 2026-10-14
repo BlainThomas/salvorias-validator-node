@@ -5,6 +5,42 @@ release announcement will provide either an immutable image digest or a public
 release tarball with its SHA-256, plus the binary SHA-256 and upgrade height.
 Do not substitute an unverified artifact.
 
+For the `salvorias-security-v1.2.0` release, use the manifest-driven wrapper
+below. It selects the correct Linux architecture, verifies the published
+manifest and image checksums, applies loopback-only RPC publication, disables
+insecure account unlock, and delegates the key-safe replacement to the standard
+updater.
+
+## Security v1.2.0 operator command
+
+For the coordinated H3,900,000 release, `scripts/update-h3900000.sh` is the
+single-command entry point. The announcement supplies its immutable GitHub
+commit URL; operators run `curl -fsSL URL | sudo bash`. No arguments, repository
+clone, manual hashes, or wallet credentials are required. All integrity pins
+and the activation height are inside the script. It starts a persistent systemd
+job and prints the progress command. Publish the draft release and verify public
+downloads before telling operators to execute it. This prepares the old binary
+to stop at H-1 and starts the new binary at H; operators can run it before H.
+
+The formal announcement will replace `OPERATOR_COMMIT`, `MANIFEST_URL`,
+`MANIFEST_SHA256`, and `UPGRADE_HEIGHT`. Do not guess any value.
+
+Safe preflight while the validator is running:
+
+```bash
+cd ~/salvorias-validator-node && git fetch origin OPERATOR_COMMIT && git checkout --detach OPERATOR_COMMIT && sudo ./scripts/run-security-upgrade.sh preflight --manifest-url MANIFEST_URL --manifest-sha256 MANIFEST_SHA256
+```
+
+Advanced apply command before the announced height (the script waits for H-1):
+
+```bash
+cd ~/salvorias-validator-node && git fetch origin OPERATOR_COMMIT && git checkout --detach OPERATOR_COMMIT && sudo ./scripts/run-security-upgrade.sh apply --manifest-url MANIFEST_URL --manifest-sha256 MANIFEST_SHA256 --upgrade-height UPGRADE_HEIGHT --yes
+```
+
+The wrapper refuses non-HTTPS manifests, a checksum mismatch, an unexpected
+upgrade name, an unsupported CPU architecture, an unconfirmed apply, or a
+missing/invalid height.
+
 ## What the updater preserves
 
 - The existing Docker volume or bind mount at `/home/evmos/.evmosd`.
