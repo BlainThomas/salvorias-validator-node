@@ -19,7 +19,9 @@ Usage:
 
 The manifest checksum and upgrade height must come from the signed operator
 announcement. Apply is fail-closed without --yes and always enables validator
-RPC hardening.
+RPC hardening. Apply may be started before activation: it keeps the old binary
+running with an exact halt guard until the release height, then replaces it.
+Run in a persistent root terminal session; no automatic downgrade is permitted.
 EOF
 }
 
@@ -84,6 +86,15 @@ case "$(uname -m)" in
 esac
 
 upgrade_name="$(jq -er '.upgrade_name' "$manifest")"
+manifest_height="$(jq -er '.activation_height | numbers' "$manifest")"
+if [[ ! "$manifest_height" =~ ^[0-9]+$ || "$manifest_height" -lt 1 ]]; then
+  echo "Manifest must contain a positive fixed activation height." >&2
+  exit 1
+fi
+if [[ "$mode" == "apply" && "$upgrade_height" != "$manifest_height" ]]; then
+  echo "Requested height does not match the checksum-pinned release manifest." >&2
+  exit 1
+fi
 image="$(jq -er --arg arch "$arch" '.platforms[$arch].image' "$manifest")"
 archive="$(jq -er --arg arch "$arch" '.platforms[$arch].archive' "$manifest")"
 archive_sha256="$(jq -er --arg arch "$arch" '.platforms[$arch].archive_sha256' "$manifest")"
@@ -109,6 +120,7 @@ args=(
 )
 if [[ "$mode" == "apply" ]]; then
   args+=(
+    --fixed-height
     --upgrade-name "$upgrade_name"
     --upgrade-height "$upgrade_height"
     --minimum-gas-prices "$minimum_gas_prices"
