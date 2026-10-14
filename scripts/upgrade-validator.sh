@@ -644,7 +644,9 @@ if [[ "$FIXED_HEIGHT" == "true" ]]; then
   fixed_next_height() {
     # The verified candidate is an OFFLINE reader only here: export does not
     # start consensus or run PreBlocker. Old releases have a broken export CLI.
-    docker run --rm --network none --entrypoint evmosd \
+    local db_owner
+    db_owner="$(stat -c '%u:%g' "$NODE_HOME_MOUNT_SOURCE/data/application.db")"
+    docker run --rm --network none --user "$db_owner" --entrypoint evmosd \
       --volume "$NODE_HOME_MOUNT_SOURCE:$HOME_DIR" "$IMAGE" \
       export --home "$HOME_DIR" --chain-id "$CHAIN_ID" --modules-to-export gov \
       2>"$BACKUP_DIR/height-export.log" | jq -er '.initial_height | tonumber'
