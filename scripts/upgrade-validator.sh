@@ -517,7 +517,7 @@ if [[ "$MODE" == "apply" ]]; then
     echo "Apply requires a valid published --minimum-gas-prices value." >&2
     exit 1
   fi
-  if [[ "$UPGRADE_NAME" == "salvorias-security-v1.2.0" && "$FIXED_HEIGHT" != "true" ]]; then
+  if [[ ( "$UPGRADE_NAME" == "salvorias-security-v1.2.0" || "$UPGRADE_NAME" == "salvorias-legacy-text-v1.2.1" ) && "$FIXED_HEIGHT" != "true" ]]; then
     echo "This security release requires --fixed-height; legacy early/recovery modes are not safe." >&2
     exit 1
   fi
