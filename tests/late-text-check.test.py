@@ -9,6 +9,17 @@ gate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(gate)
 
 class LateGate(unittest.TestCase):
+    def test_jay_exact_nanosecond_timestamp(self):
+        for suffix in ('Z', '+00:00'):
+            self.assertEqual(gate.parse_timestamp('2026-10-20T22:13:29.862499866'+suffix),
+                             datetime(2026,10,20,22,13,29,862499,tzinfo=timezone.utc))
+    def test_fraction_precision(self):
+        for digits in ('', '1','12','123','1234','12345','123456','1234567','12345678','123456789'):
+            value='2026-10-20T22:13:29'+('.'+digits if digits else '')+'Z'
+            self.assertEqual(gate.parse_timestamp(value).microsecond, int((digits+'000000')[:6]))
+    def test_bad_timestamps_refused(self):
+        for value in ('2026-10-20T22:13:29', '2026-10-20T22:13:29+01:00', '2026-10-20T22:13:29.1234567890Z','garbage'):
+            with self.assertRaises(ValueError):gate.parse_timestamp(value)
     def setUp(self):
         self.s={'node_info':{'network':'salvorias_7282-1'},'sync_info':{'catching_up':False,'latest_block_height':'4031700','latest_block_time':datetime.now(timezone.utc).isoformat()}}
         self.b={'block_id':{'hash':'abc'},'block':{'header':{'height':'4031698','chain_id':'salvorias_7282-1','app_hash':'def'}}}

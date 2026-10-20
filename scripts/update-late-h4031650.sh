@@ -33,8 +33,8 @@ main() {
   umask 077
   install -d -m 0700 "$root"
   local url=https://github.com/BlainThomas/salvorias-validator-node/releases/download/legacy-text-h4031650
-  curl -fL --retry 3 "$url/validator-operator-late-h4031650-r1.tar.gz" -o "$root/operator.tar.gz"
-  printf '%s  %s\n' 7446f74d3f5db3ad40988441658d533049ba1ca341dacc1c4a65f336ac2ba4a2 "$root/operator.tar.gz" | sha256sum -c -
+  curl -fL --retry 3 "$url/validator-operator-late-h4031650-r2.tar.gz" -o "$root/operator.tar.gz"
+  printf '%s  %s\n' ee00a1218c0b467467fd415de817fa51e4c5f6cc32dd0817c86eadbe970738d5 "$root/operator.tar.gz" | sha256sum -c -
   tar -xzf "$root/operator.tar.gz" -C "$root"
   cat >"/etc/systemd/system/$unit.service" <<EOF
 [Unit]

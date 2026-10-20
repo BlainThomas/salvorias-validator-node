@@ -58,8 +58,15 @@ fresh, caught-up mainnet state and matching canonical block/application hashes
 at a common post-activation height. Unknown binaries and mismatched states are
 refused, not reset or resynchronized automatically.
 
-The pinned public bundle is `validator-operator-late-h4031650-r1.tar.gz`, SHA-256
-`7446f74d3f5db3ad40988441658d533049ba1ca341dacc1c4a65f336ac2ba4a2`.
+The current pinned public bundle is `validator-operator-late-h4031650-r2.tar.gz`, SHA-256
+`ee00a1218c0b467467fd415de817fa51e4c5f6cc32dd0817c86eadbe970738d5`.
+Revision 2 fixes Python <3.11 parsing of Comet RFC3339 nanosecond timestamps.
+Jay's revision-1 failure occurred at the first read-only compatibility check,
+before any validator stop or replacement. The exact reported timestamp
+`2026-10-20T22:13:29.862499866Z` is covered by regression tests; all 14 gate
+tests pass under Python 3.8 as well as the current runtime. No chain binary,
+upgrade semantics, or freshness limits changed. The old immutable bundle
+remains available for audit; use the revision-2 launcher commit for retries.
 It uses the existing release's checksum-verified image. It retains node data,
 keys and signing state in place, creates preflight/stopped safety backups,
 retains the old container stopped with restart disabled, and never automatically

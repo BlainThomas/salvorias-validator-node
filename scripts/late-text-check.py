@@ -2,6 +2,7 @@
 """Read-only compatibility gate for the state-preserving legacy-text update."""
 import argparse
 import json
+import re
 import subprocess
 import urllib.request
 from datetime import datetime, timezone
@@ -9,13 +10,22 @@ from datetime import datetime, timezone
 NEW = '486e971ecf8321be52d5b34c568273b68e22b494ce1af3c91bb1d72e4ac15a83'
 OLD = '903694262846d4badc8db8825d8c78b6a5ae80ab6e6f8849e205a2b760067072'
 
+def parse_timestamp(value):
+    # Comet emits RFC3339Nano. Python <3.11 fromisoformat rejects 9-digit
+    # fractions. Parse UTC explicitly; sub-microsecond truncation is <1us.
+    match = re.fullmatch(r'(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?(?:Z|\+00:00)', value)
+    if not match:
+        raise ValueError('Invalid UTC block timestamp')
+    micros = int(((match.group(2) or '') + '000000')[:6])
+    return datetime.strptime(match.group(1), '%Y-%m-%dT%H:%M:%S').replace(microsecond=micros, tzinfo=timezone.utc)
+
 def validate(local, remote, left, right, digest, require_new=False):
     assert digest in ({NEW} if require_new else {OLD, NEW}), 'Unreviewed binary; stop and contact Blain'
     for status in (local, remote):
         assert status['node_info']['network'] == 'salvorias_7282-1', 'Wrong chain'
         assert status['sync_info']['catching_up'] is False, 'Still catching up'
         assert int(status['sync_info']['latest_block_height']) > 4031650, 'Not past activation'
-        stamp = datetime.fromisoformat(status['sync_info']['latest_block_time'].replace('Z', '+00:00'))
+        stamp = parse_timestamp(status['sync_info']['latest_block_time'])
         age = (datetime.now(timezone.utc) - stamp).total_seconds()
         assert -30 <= age <= 120, 'Stale block timestamp'
     assert abs(int(local['sync_info']['latest_block_height']) - int(remote['sync_info']['latest_block_height'])) <= 10, 'RPC lag too large'
