@@ -621,6 +621,15 @@ if [[ "$FIXED_HEIGHT" == "true" && "$LIVE_STATUS_AVAILABLE" == "true" ]]; then
   }
 fi
 
+# The read RPC keeps monitoring throughout the handoff, but must not race the
+# updater with a watchdog restart. Its separately installed guard clears this
+# marker only after the new binary, identity and committed height are verified.
+if [[ "$CONTAINER_NAME" == "salvorias-rpc-node" && "$FIXED_HEIGHT" == "true" ]]; then
+  [[ "$UPGRADE_HEIGHT" == 4031650 ]] || { echo 'Missing read RPC guard for this height.' >&2; exit 1; }
+  /usr/local/bin/salvorias-rpc-h4031650-guard.sh --check-installed
+  install -d -m 0700 /var/lib/salvorias-rpc-watchdog
+  touch /var/lib/salvorias-rpc-watchdog/upgrade-h4031650.pending
+fi
 watchdog_was_active=false
 if [[ "$CONTAINER_NAME" == "salvorias-validator" || "$CONTAINER_NAME" == "salvorias-droplet" ]] &&
    command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet salvorias-validator-watchdog.timer; then
