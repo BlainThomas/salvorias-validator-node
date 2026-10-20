@@ -93,6 +93,18 @@ class Tests(unittest.TestCase):
         self.assertIn("not jailed", self.run_helper())
         self.assertEqual([], self.node.sent)
 
+    def test_proto_omitted_false_fields(self):
+        del self.node.validator["jailed"]
+        self.assertIn("not jailed", self.run_helper())
+        self.node.validator["jailed"] = True
+        del self.node.info["tombstoned"]
+        self.assertIn("nothing sent", self.run_helper())
+
+    def test_live_cli_public_key_encoding(self):
+        self.node.validator["consensus_pubkey"] = {"type": PUB["@type"], "value": PUB["key"]}
+        self.node.current["validator_info"]["pub_key"] = {"type": "tendermint/PubKeyEd25519", "value": PUB["key"]}
+        self.assertIn("nothing sent", self.run_helper())
+
     def test_send_once_and_confirm(self):
         self.args.submit = True
         self.assertIn("Unjail confirmed", self.run_helper())

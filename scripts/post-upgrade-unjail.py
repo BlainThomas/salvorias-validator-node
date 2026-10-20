@@ -59,14 +59,18 @@ def check(node, args, now):
     require(-15 <= age <= 60, "Local block is stale or clock is incorrect.")
     validator = node.query("staking", "validator", args.valoper)["validator"]
     local_pubkey = status["validator_info"]["pub_key"]
-    chain_pubkey = validator["consensus_pubkey"]
+    raw_pubkey = validator["consensus_pubkey"]
+    chain_pubkey = {"@type": raw_pubkey.get("@type", raw_pubkey.get("type")),
+                    "key": raw_pubkey.get("key", raw_pubkey.get("value"))}
+    require(chain_pubkey["@type"] == "/cosmos.crypto.ed25519.PubKey" and
+            bool(chain_pubkey["key"]), "Unsupported or missing consensus public key.")
     require(local_pubkey.get("key", local_pubkey.get("value")) == chain_pubkey["key"],
             "Operator does not belong to this node's consensus key.")
-    require(isinstance(validator.get("jailed"), bool), "Malformed validator state.")
-    if not validator["jailed"]:
+    require(isinstance(validator.get("jailed", False), bool), "Malformed validator state.")
+    if not validator.get("jailed", False):
         return None
     info = node.query("slashing", "signing-info", json.dumps(chain_pubkey))["val_signing_info"]
-    require(info.get("tombstoned") is False, "Tombstoned validator: manual investigation required.")
+    require(info.get("tombstoned", False) is False, "Tombstoned validator: manual investigation required.")
     require(timestamp(info["jailed_until"]) <= timestamp(sync["latest_block_time"]),
             "Jail period has not elapsed on chain; retry checks later.")
     key_flags = ("--keyring-backend", "test", "--home", "/home/evmos/.evmosd")
@@ -128,7 +132,7 @@ def run(node, args, now=None):
             continue
         require(int(confirmed.get("height", 0)) > 0 and confirmed.get("code") == 0,
                 f"Unjail transaction failed or was not included: {txhash}. Manual review required.")
-        jailed = node.query("staking", "validator", args.valoper)["validator"]["jailed"]
+        jailed = node.query("staking", "validator", args.valoper)["validator"].get("jailed", False)
         require(jailed is False, f"Transaction included but validator remains jailed: {txhash}.")
         return f"Unjail confirmed: {txhash}. Verify subsequent signing; bonded status is not guaranteed."
     raise Refused(f"Confirmation pending for {txhash}. Do not rebroadcast; inspect the recorded transaction.")

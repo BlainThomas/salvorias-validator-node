@@ -603,6 +603,24 @@ BASE_VALIDATOR_ADDRESS="$VALIDATOR_ADDRESS"
 BASE_PRIVKEY_HASH="$PRIVKEY_HASH"
 BASE_NODEKEY_HASH="$NODEKEY_HASH"
 
+if [[ "$FIXED_HEIGHT" == "true" && "$LIVE_STATUS_AVAILABLE" == "true" ]]; then
+  # Staging may begin the evening before activation. Keep the current process
+  # and its watchdog untouched until the bounded handoff window.
+  echo "Release staged. Waiting until 100 blocks before $UPGRADE_HEIGHT; old binary and watchdog stay running."
+  while (( APPLICATION_HEIGHT + 100 < UPGRADE_HEIGHT )); do
+    sleep 30
+    read_identity
+    [[ "$VALIDATOR_ADDRESS" == "$BASE_VALIDATOR_ADDRESS" && "$PRIVKEY_HASH" == "$BASE_PRIVKEY_HASH" && "$NODEKEY_HASH" == "$BASE_NODEKEY_HASH" ]] || {
+      echo 'Validator identity changed while staged; refusing handoff.' >&2; exit 1;
+    }
+  done
+  (( APPLICATION_HEIGHT < UPGRADE_HEIGHT )) || { echo 'Activation boundary already passed; manual recovery required.' >&2; exit 1; }
+  current_plan="$(docker exec "$CONTAINER_NAME" evmosd query upgrade plan --output json)"
+  jq -e 'type == "object" and (.plan == null)' <<<"$current_plan" >/dev/null || {
+    echo 'An on-chain upgrade plan appeared while staged; refusing conflicting handoff.' >&2; exit 1;
+  }
+fi
+
 watchdog_was_active=false
 if [[ "$CONTAINER_NAME" == "salvorias-validator" || "$CONTAINER_NAME" == "salvorias-droplet" ]] &&
    command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet salvorias-validator-watchdog.timer; then

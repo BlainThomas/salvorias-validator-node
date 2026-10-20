@@ -9,6 +9,7 @@ manifest_sha256=""
 upgrade_height=""
 minimum_gas_prices="1000000000SAVDR"
 confirmed=false
+unjail_if_needed=false
 
 usage() {
   cat <<'EOF'
@@ -32,6 +33,7 @@ while [[ $# -gt 0 ]]; do
     --upgrade-height) upgrade_height="$2"; shift 2 ;;
     --minimum-gas-prices) minimum_gas_prices="$2"; shift 2 ;;
     --yes) confirmed=true; shift ;;
+    --unjail-if-needed) unjail_if_needed=true; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; usage; exit 1 ;;
   esac
@@ -127,4 +129,28 @@ if [[ "$mode" == "apply" ]]; then
   )
 fi
 
-exec "$updater" "${args[@]}"
+"$updater" "${args[@]}"
+if [[ "$mode" == apply && "$unjail_if_needed" == true ]]; then
+  container="${CONTAINER_NAME:-}"
+  if [[ -z "$container" ]]; then
+    for candidate in salvorias-validator salvorias-droplet; do
+      if docker container inspect "$candidate" >/dev/null 2>&1; then
+        container="$candidate"
+        break
+      fi
+    done
+  fi
+  [[ -n "$container" ]] || { echo 'Upgrade finished; unjail needs an explicit container.' >&2; exit 2; }
+  key_name="${OPERATOR_KEY_NAME:-validator}"
+  # Discover the operator using public consensus identity, not a locally stored key.
+  # A healthy validator may correctly keep its operator signing key off this host.
+  if ! pubkey="$(docker exec "$container" evmosd status | jq -er '.validator_info.pub_key.key // .validator_info.pub_key.value')" ||
+     ! valoper="$(docker exec "$container" evmosd query staking validators --page-limit 1000 --output json |
+       jq -er --arg key "$pubkey" '[.validators[] | select((.consensus_pubkey.key // .consensus_pubkey.value) == $key) | .operator_address] | select(length == 1) | .[0]')"; then
+    echo 'Upgrade finished. Could not uniquely resolve the validator operator; inspect manually.' >&2
+    exit 2
+  fi
+  python3 "$script_dir/post-upgrade-unjail.py" --container "$container" \
+    --binary-sha256 "$binary_sha256" --minimum-height "$upgrade_height" \
+    --valoper "$valoper" --key-name "$key_name" --submit
+fi
