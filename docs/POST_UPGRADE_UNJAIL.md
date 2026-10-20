@@ -1,8 +1,12 @@
 # Optional post-upgrade unjail
 
-Status: review candidate, not yet integrated into a published release launcher.
-Offline tests use simulated node responses only. A testnet transaction rehearsal
-and exact release command verification remain required before operator use.
+Status: integrated in the H4031650 launcher. Isolated two-validator rehearsals
+on 2026-10-20 verified the public download/checksum path, exact old-to-new height
+handoff, a healthy validator requiring no transaction, and a delayed jailed
+validator catching up and successfully unjailing with its disposable QA key.
+The final public launcher also recognizes systemd's `activating` state so an
+overnight oneshot job cannot accidentally be launched twice. Guard tests cover
+active/activating jobs, wrong binary/chain/identity/height, and catch-up.
 
 `scripts/post-upgrade-unjail.py` is an optional completion step AFTER a successful
 coordinated upgrade. It does not install a binary, restart a node, change signing
@@ -32,7 +36,11 @@ Dependencies: Python 3 on Linux, Docker, standard validator evmosd CLI with loca
 RPC available. The helper is intended to run under the operator's privileged
 release process. It uses a container-specific lock and restrictive state directory.
 
-Tomorrow's target is October 20, 2026, 11:00 MDT (17:00 UTC), subject to release
-clearance and coordinated activation height. Late operators must keep old binaries
+The activation height is 4,031,650, estimated October 20, 2026, 11:00 MDT
+(17:00 UTC); wall-clock timing is approximate. Late operators must keep old binaries
 stopped until upgraded. Zero downtime slashing does not disable jail or double-sign
 penalties. Do not reuse the prior H3900000 update command.
+
+The successful late rehearsal started from a node halted at H-1. A node that
+was never staged and has executed old code past the boundary is refused and
+requires operator-led recovery. Never reset or rewind signing state.

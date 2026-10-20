@@ -37,8 +37,8 @@ main() {
   umask 077
   install -d -m 0700 "$root"
   local url=https://github.com/BlainThomas/salvorias-validator-node/releases/download/legacy-text-h4031650
-  curl -fL --retry 3 "$url/validator-operator-h4031650-r2.tar.gz" -o "$root/operator.tar.gz"
-  printf '%s  %s\n' 8273cddfd02716bab674ca31acfa64edb25d5ac9e8a3b361647fde15275a5727 "$root/operator.tar.gz" | sha256sum -c -
+  curl -fL --retry 3 "$url/validator-operator-h4031650-r3.tar.gz" -o "$root/operator.tar.gz"
+  printf '%s  %s\n' 8f92632d0bdbcc1ae07d85eab9fb34927190acc64a7007f3336f02e57102341c "$root/operator.tar.gz" | sha256sum -c -
   tar -xzf "$root/operator.tar.gz" -C "$root"
   local extra=--unjail-if-needed
   [[ "$c" != salvorias-rpc-node ]] || extra=
