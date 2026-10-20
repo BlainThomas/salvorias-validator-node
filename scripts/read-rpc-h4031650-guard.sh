@@ -7,7 +7,9 @@ if [[ "${1:-}" == --check-installed ]]; then
 fi
 marker=/var/lib/salvorias-rpc-watchdog/upgrade-h4031650.pending
 [[ -e "$marker" ]] || exit 0
-systemctl is-active --quiet salvorias-legacy-h4031650 && exit 1
+case "$(systemctl show salvorias-legacy-h4031650 -p ActiveState --value)" in
+  active|activating|reloading) exit 1 ;;
+esac
 c=salvorias-rpc-node
 hash=$(docker exec "$c" sh -c 'sha256sum "$(command -v evmosd)"' | awk '{print $1}')
 [[ "$hash" == 486e971ecf8321be52d5b34c568273b68e22b494ce1af3c91bb1d72e4ac15a83 ]] || exit 1

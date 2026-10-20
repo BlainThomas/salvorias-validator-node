@@ -24,7 +24,7 @@ main() {
   fi
   exec 8>"/run/lock/$unit-launcher.lock"
   flock -n 8 || { echo 'Launcher already running.' >&2; return 1; }
-  if systemctl is-active --quiet "$unit"; then
+  if [[ "$(systemctl show "$unit" -p ActiveState --value)" =~ ^(active|activating|reloading)$ ]]; then
     echo "Already staged/running. Check: sudo journalctl -fu $unit"; return 0
   fi
   local status height
