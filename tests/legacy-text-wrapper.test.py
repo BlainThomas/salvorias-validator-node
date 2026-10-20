@@ -25,11 +25,12 @@ class LegacyManifestTests(fixed.ManifestTests):
 class StagingWaitTests(unittest.TestCase):
     def test_wait_keeps_services_untouched_and_rechecks_plan(self):
         source = (Path(__file__).resolve().parents[1] / "scripts/upgrade-validator.sh").read_text()
-        start = source.index('if [[ "$FIXED_HEIGHT" == "true" && "$LIVE_STATUS_AVAILABLE" == "true" ]]; then\n  # Staging')
+        start = source.index('if [[ "$FIXED_HEIGHT" == "true" && "$LIVE_STATUS_AVAILABLE" == "true" && "$LATE_TEXT" != true ]]; then\n  # Staging')
         block = source[start:source.index('watchdog_was_active=false', start)]
         setup = '''
 set -euo pipefail
 FIXED_HEIGHT=true
+LATE_TEXT=false
 LIVE_STATUS_AVAILABLE=true
 APPLICATION_HEIGHT=4031500
 UPGRADE_HEIGHT=4031650

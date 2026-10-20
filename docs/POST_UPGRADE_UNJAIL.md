@@ -44,3 +44,39 @@ penalties. Do not reuse the prior H3900000 update command.
 The successful late rehearsal started from a node halted at H-1. A node that
 was never staged and has executed old code past the boundary is refused and
 requires operator-led recovery. Never reset or rewind signing state.
+
+## Reviewed late text-handler update (October 20, 2026)
+
+`update-late-h4031650.sh` is a separate late-installation path, not a bypass of
+the fixed-height launcher's guard. It is restricted to the reviewed old binary
+`903694262846d4badc8db8825d8c78b6a5ae80ab6e6f8849e205a2b760067072`
+and candidate
+`486e971ecf8321be52d5b34c568273b68e22b494ce1af3c91bb1d72e4ac15a83`.
+The runtime diff registers a legacy signaling TextProposal handler; it adds no
+store migration. Before stopping anything, the late path requires responsive,
+fresh, caught-up mainnet state and matching canonical block/application hashes
+at a common post-activation height. Unknown binaries and mismatched states are
+refused, not reset or resynchronized automatically.
+
+The pinned public bundle is `validator-operator-late-h4031650-r1.tar.gz`, SHA-256
+`7446f74d3f5db3ad40988441658d533049ba1ca341dacc1c4a65f336ac2ba4a2`.
+It uses the existing release's checksum-verified image. It retains node data,
+keys and signing state in place, creates preflight/stopped safety backups,
+retains the old container stopped with restart disabled, and never automatically
+downgrades after starting the candidate. A systemd job survives SSH disconnect.
+No funding, proposal, delegation or unjail transaction is submitted. Success
+requires the new binary, fresh canonical-matching state, catch-up completed,
+and the matching validator bonded and not jailed. A jailed or divergent node
+still requires manual review. Re-running an already-updated healthy node only
+verifies it; it does not replace or restart it.
+
+Validation: 11 late compatibility checks, 9 legacy-wrapper tests, 8 fixed-height
+tests, security guard/wrapper suites pass on Linux. The post-activation isolated
+two-validator rehearsal upgraded the old binary at height 4,031,813 and returned
+to canonical-matching state at 4,031,819; operator identity was preserved and the
+validator remained bonded/not jailed. Download/checksum/systemd launcher and
+already-updated rerun are tested separately. QA uses an internal Docker network
+with no published ports, separate from the real testnet node.
+
+Operators should send the final `LATE UPDATE VERIFIED` output to Blain; keep
+mainnet proposal publishing on hold until all operator versions are confirmed.
