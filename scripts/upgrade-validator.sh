@@ -16,6 +16,7 @@ UPGRADE_NAME="${UPGRADE_NAME:-}"
 MINIMUM_GAS_PRICES="${MINIMUM_GAS_PRICES:-}"
 COORDINATED_HARDFORK="${COORDINATED_HARDFORK:-false}"
 FIXED_HEIGHT=false
+LATE_TEXT=false
 CANDIDATE_STARTED=false
 ORIGINAL_RESTART=""
 POST_HARDFORK_RECOVERY="${POST_HARDFORK_RECOVERY:-false}"
@@ -66,6 +67,7 @@ while [[ $# -gt 0 ]]; do
     --minimum-gas-prices) MINIMUM_GAS_PRICES="$2"; shift 2 ;;
     --coordinated-hardfork) COORDINATED_HARDFORK=true; shift ;;
     --fixed-height) FIXED_HEIGHT=true; shift ;;
+    --late-text) LATE_TEXT=true; FIXED_HEIGHT=true; shift ;;
     --post-hardfork-recovery) POST_HARDFORK_RECOVERY=true; shift ;;
     --harden-rpc) HARDEN_RPC=true; shift ;;
     --trusted-rpc) TRUSTED_RPC="$2"; shift 2 ;;
@@ -118,7 +120,12 @@ exec 9>"/run/lock/salvorias-upgrade-$CONTAINER_NAME.lock"
 flock -n 9 || { echo "Another upgrade process holds this validator's lock." >&2; exit 1; }
 
 container_status() {
-  docker exec "$CONTAINER_NAME" evmosd status 2>/dev/null
+  docker exec "$CONTAINER_NAME" evmosd status --node tcp://127.0.0.1:26657 2>/dev/null
+}
+
+late_text_check() {
+  python3 "$(dirname "${BASH_SOURCE[0]}")/late-text-check.py" \
+    --container "$CONTAINER_NAME" --rpc "$TRUSTED_RPC" "$@"
 }
 
 container_app_info() {
@@ -517,7 +524,7 @@ if [[ "$MODE" == "apply" ]]; then
     echo "Apply requires a valid published --minimum-gas-prices value." >&2
     exit 1
   fi
-  if [[ "$UPGRADE_NAME" == "salvorias-security-v1.2.0" && "$FIXED_HEIGHT" != "true" ]]; then
+  if [[ ( "$UPGRADE_NAME" == "salvorias-security-v1.2.0" || "$UPGRADE_NAME" == "salvorias-legacy-text-v1.2.1" ) && "$FIXED_HEIGHT" != "true" ]]; then
     echo "This security release requires --fixed-height; legacy early/recovery modes are not safe." >&2
     exit 1
   fi
@@ -530,7 +537,15 @@ if [[ "$MODE" == "apply" ]]; then
     exit 1
   fi
   if [[ "$FIXED_HEIGHT" == "true" ]]; then
-    if [[ "$LIVE_STATUS_AVAILABLE" == "true" ]] && (( APPLICATION_HEIGHT >= UPGRADE_HEIGHT )); then
+    if [[ "$LATE_TEXT" == "true" ]]; then
+      [[ "$UPGRADE_NAME" == salvorias-legacy-text-v1.2.1 && "$UPGRADE_HEIGHT" == 4031650 && "$LIVE_STATUS_AVAILABLE" == true ]] || {
+        echo 'Late mode is restricted to the reviewed text-handler release and a responsive node.' >&2; exit 1;
+      }
+      [[ "$BINARY_SHA256" == 486e971ecf8321be52d5b34c568273b68e22b494ce1af3c91bb1d72e4ac15a83 && "$CONTAINER_NAME" != salvorias-rpc-node ]] || {
+        echo 'Late mode is restricted to the approved validator binary.' >&2; exit 1;
+      }
+      late_text_check
+    elif [[ "$LIVE_STATUS_AVAILABLE" == "true" ]] && (( APPLICATION_HEIGHT >= UPGRADE_HEIGHT )); then
       echo "Live node has already reached activation height; refusing to stop it or reapply. Use verify." >&2
       exit 1
     fi
@@ -603,6 +618,34 @@ BASE_VALIDATOR_ADDRESS="$VALIDATOR_ADDRESS"
 BASE_PRIVKEY_HASH="$PRIVKEY_HASH"
 BASE_NODEKEY_HASH="$NODEKEY_HASH"
 
+if [[ "$FIXED_HEIGHT" == "true" && "$LIVE_STATUS_AVAILABLE" == "true" && "$LATE_TEXT" != true ]]; then
+  # Staging may begin the evening before activation. Keep the current process
+  # and its watchdog untouched until the bounded handoff window.
+  echo "Release staged. Waiting until 100 blocks before $UPGRADE_HEIGHT; old binary and watchdog stay running."
+  while (( APPLICATION_HEIGHT + 100 < UPGRADE_HEIGHT )); do
+    sleep 30
+    read_identity
+    [[ "$VALIDATOR_ADDRESS" == "$BASE_VALIDATOR_ADDRESS" && "$PRIVKEY_HASH" == "$BASE_PRIVKEY_HASH" && "$NODEKEY_HASH" == "$BASE_NODEKEY_HASH" ]] || {
+      echo 'Validator identity changed while staged; refusing handoff.' >&2; exit 1;
+    }
+  done
+  (( APPLICATION_HEIGHT < UPGRADE_HEIGHT )) || { echo 'Activation boundary already passed; manual recovery required.' >&2; exit 1; }
+  current_plan="$(docker exec "$CONTAINER_NAME" evmosd query upgrade plan --output json)"
+  jq -e 'type == "object" and (.plan == null)' <<<"$current_plan" >/dev/null || {
+    echo 'An on-chain upgrade plan appeared while staged; refusing conflicting handoff.' >&2; exit 1;
+  }
+fi
+
+# The read RPC keeps monitoring throughout the handoff, but must not race the
+# updater with a watchdog restart. Its separately installed guard clears this
+# marker only after the new binary, identity and committed height are verified.
+if [[ "$CONTAINER_NAME" == "salvorias-rpc-node" && "$FIXED_HEIGHT" == "true" ]]; then
+  [[ "$UPGRADE_HEIGHT" == 4031650 ]] || { echo 'Missing read RPC guard for this height.' >&2; exit 1; }
+  /usr/local/bin/salvorias-rpc-h4031650-guard.sh --check-installed
+  install -d -m 0700 /var/lib/salvorias-rpc-watchdog
+  touch /var/lib/salvorias-rpc-watchdog/upgrade-h4031650.pending
+fi
+if [[ "$LATE_TEXT" == true ]]; then late_text_check; fi
 watchdog_was_active=false
 if [[ "$CONTAINER_NAME" == "salvorias-validator" || "$CONTAINER_NAME" == "salvorias-droplet" ]] &&
    command -v systemctl >/dev/null 2>&1 && systemctl is-active --quiet salvorias-validator-watchdog.timer; then
@@ -660,11 +703,13 @@ if [[ "$FIXED_HEIGHT" == "true" ]]; then
     sed -i "s/^halt-height = .*/halt-height = $height/" "$file"
   }
   NEXT_HEIGHT="$(fixed_next_height)"
-  if (( NEXT_HEIGHT > UPGRADE_HEIGHT )); then
+  if [[ "$LATE_TEXT" == true ]]; then
+    (( NEXT_HEIGHT > UPGRADE_HEIGHT )) || { echo 'Late mode requires post-activation committed state.' >&2; exit 1; }
+  elif (( NEXT_HEIGHT > UPGRADE_HEIGHT )); then
     echo "Old application has already executed activation height. Leave stopped; coordinated recovery required." >&2
     exit 1
   fi
-  if (( NEXT_HEIGHT < UPGRADE_HEIGHT )); then
+  if [[ "$LATE_TEXT" != true ]] && (( NEXT_HEIGHT < UPGRADE_HEIGHT )); then
     set_fixed_halt "$((UPGRADE_HEIGHT - 1))"
     docker start "$CONTAINER_NAME" >/dev/null
     echo "Old binary will halt after $((UPGRADE_HEIGHT - 1)); waiting for exact handoff. Do not start the candidate early."
@@ -679,7 +724,7 @@ if [[ "$FIXED_HEIGHT" == "true" ]]; then
     docker stop --time 60 "$CONTAINER_NAME" >/dev/null
     NEXT_HEIGHT="$(fixed_next_height)"
   fi
-  if (( NEXT_HEIGHT != UPGRADE_HEIGHT )); then
+  if [[ "$LATE_TEXT" != true ]] && (( NEXT_HEIGHT != UPGRADE_HEIGHT )); then
     echo "Not at the exact committed boundary (next=$NEXT_HEIGHT expected=$UPGRADE_HEIGHT). Left stopped; investigate before retry." >&2
     exit 1
   fi
@@ -747,6 +792,18 @@ sleep 15
 if [[ "$(docker inspect -f '{{.State.Running}}' "$CONTAINER_NAME")" != "true" ]]; then
   restore_old_container "$OLD_CONTAINER"
   exit 1
+fi
+
+if [[ "$LATE_TEXT" == true ]]; then
+  verified=false
+  for attempt in $(seq 1 30); do
+    if late_text_check --require-new; then verified=true; break; fi
+    sleep 5
+  done
+  if [[ "$verified" != true ]]; then
+    restore_old_container "$OLD_CONTAINER"
+    exit 1
+  fi
 fi
 
 if [[ "$watchdog_was_active" == "true" ]]; then

@@ -18,7 +18,7 @@ class ManifestTests(unittest.TestCase):
         self.root = Path(self.tmp.name)
         self.bin = self.root / "bin"
         self.bin.mkdir()
-        source = Path(__file__).resolve().parents[1] / "scripts/run-security-upgrade.sh"
+        source = Path(__file__).resolve().parents[1] / "scripts" / getattr(self, "wrapper_name", "run-security-upgrade.sh")
         self.wrapper = self.root / "run-security-upgrade.sh"
         shutil.copy2(source, self.wrapper)
         updater = self.root / "upgrade-validator.sh"
@@ -28,7 +28,7 @@ class ManifestTests(unittest.TestCase):
         curl.write_text('#!/usr/bin/env python3\nimport os,shutil,sys\nshutil.copyfile(os.environ["FIXTURE"],sys.argv[sys.argv.index("-o")+1])\n')
         curl.chmod(0o700)
         self.manifest = {
-            "upgrade_name": "salvorias-security-v1.2.0",
+            "upgrade_name": getattr(self, "upgrade_name", "salvorias-security-v1.2.0"),
             "activation_height": 3900000,
             "platforms": {arch: {"image": "qa:candidate", "archive": "image.tar.gz", "archive_sha256": "a" * 64, "binary_sha256": "b" * 64} for arch in ("amd64", "arm64")},
         }
