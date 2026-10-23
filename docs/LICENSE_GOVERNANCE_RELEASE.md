@@ -1,7 +1,10 @@
 # License-governance release preparation
 
-Status: **armed and staged on all nine managed signers and the public read RPC**
-as of October 23, 2026 15:12 UTC. Old binaries remain running until handoff.
+Status: **activated, recovered and independently verified on all nine managed
+signers**, October 23, 2026 around 17:48 UTC. The public read RPC is advancing
+and the latest observed commit contained 11/11 signatures. Three waiting jobs
+had failed before activation; those nodes required reviewed local state replay.
+Do not describe the original staging check as proof of an uninterrupted rollout.
 Do not reuse H4031650, its artifacts or its late-update mode for this release.
 
 Selected target: H4,099,155, approximately October 23, 2026 at 11:00 MDT

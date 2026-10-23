@@ -71,6 +71,14 @@ class FakeNode:
 
 
 class Tests(unittest.TestCase):
+    def test_rfc3339nano_is_portable_to_python_310(self):
+        expected = dt.datetime(2026, 10, 20, 17, 0, 0, 123456, tzinfo=dt.timezone.utc)
+        self.assertEqual(expected, helper.timestamp("2026-10-20T17:00:00.123456789Z"))
+        self.assertEqual(expected, helper.timestamp("2026-10-20T17:00:00.123456+00:00"))
+        self.assertEqual(NOW, helper.timestamp("2026-10-20T17:00:00Z"))
+        with self.assertRaises(ValueError):
+            helper.timestamp("not-a-date")
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)

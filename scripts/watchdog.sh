@@ -57,7 +57,7 @@ if [[ -z "$status_json" ]]; then
 fi
 
 height="$(printf '%s' "$status_json" | jq -r '.result.sync_info.latest_block_height // "0"' 2>/dev/null || echo 0)"
-catching_up="$(printf '%s' "$status_json" | jq -r '.result.sync_info.catching_up // true' 2>/dev/null || echo true)"
+catching_up="$(printf '%s' "$status_json" | jq -r '.result.sync_info.catching_up | if type == "boolean" then . else true end' 2>/dev/null || echo true)"
 
 net_json="$(docker exec "$CONTAINER_NAME" sh -lc 'curl -fsS --max-time 5 http://127.0.0.1:26657/net_info' 2>/dev/null || true)"
 peers=0

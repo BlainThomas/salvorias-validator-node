@@ -22,7 +22,14 @@ def require(condition, message):
 
 
 def timestamp(value):
-    return dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    # Python 3.10 (some production validators) rejects RFC3339Nano fractions.
+    # Parse UTC explicitly and truncate only sub-microsecond precision.
+    match = re.fullmatch(r"(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?(?:Z|\+00:00)", value)
+    if not match:
+        raise ValueError("Invalid UTC chain timestamp")
+    micros = int(((match.group(2) or "") + "000000")[:6])
+    return dt.datetime.strptime(match.group(1), "%Y-%m-%dT%H:%M:%S").replace(
+        microsecond=micros, tzinfo=dt.timezone.utc)
 
 
 class Node:

@@ -132,6 +132,19 @@ container_app_info() {
   docker exec "$CONTAINER_NAME" curl -fsS --max-time 10 http://127.0.0.1:26657/abci_info
 }
 
+# A transient watchdog/container restart must not silently abandon a staged job.
+# Never tolerate a changed identity; the caller still checks the pinned hashes.
+read_identity_with_retry() {
+  local attempt
+  for attempt in $(seq 1 12); do
+    if read_identity; then return 0; fi
+    echo "Temporary validator status failure while waiting ($attempt/12); retrying." >&2
+    sleep 5
+  done
+  echo 'Cannot verify validator identity after bounded retries; intervention required.' >&2
+  return 1
+}
+
 container_file_hash() {
   local path="$1"
   docker exec "$CONTAINER_NAME" sh -lc "test -f '$path' && sha256sum '$path' | cut -d' ' -f1 || true" 2>/dev/null
@@ -635,7 +648,7 @@ if [[ "$FIXED_HEIGHT" == "true" && "$LIVE_STATUS_AVAILABLE" == "true" && "$LATE_
   echo "Release staged. Waiting until 100 blocks before $UPGRADE_HEIGHT; old binary and watchdog stay running."
   while (( APPLICATION_HEIGHT + 100 < UPGRADE_HEIGHT )); do
     sleep 30
-    read_identity
+    read_identity_with_retry
     [[ "$VALIDATOR_ADDRESS" == "$BASE_VALIDATOR_ADDRESS" && "$PRIVKEY_HASH" == "$BASE_PRIVKEY_HASH" && "$NODEKEY_HASH" == "$BASE_NODEKEY_HASH" ]] || {
       echo 'Validator identity changed while staged; refusing handoff.' >&2; exit 1;
     }

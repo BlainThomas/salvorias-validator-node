@@ -3,6 +3,7 @@ import importlib.util
 from pathlib import Path
 import unittest
 import subprocess
+import re
 
 spec = importlib.util.spec_from_file_location("fixed", Path(__file__).with_name("fixed-height-wrapper.test.py"))
 fixed = importlib.util.module_from_spec(spec)
@@ -43,7 +44,8 @@ read_identity() { APPLICATION_HEIGHT=4031550; VALIDATOR_ADDRESS=a; PRIVKEY_HASH=
 docker() { [[ "$*" == 'exec qa-only evmosd query upgrade plan --output json' ]] || return 99; echo '{}'; }
 systemctl() { echo UNEXPECTED_SERVICE_CHANGE; return 99; }
 '''
-        result = subprocess.run(["bash", "-c", setup + block], capture_output=True, text=True)
+        retry = re.search(r"^read_identity_with_retry\(\) \{.*?^\}", source, re.M | re.S).group(0)
+        result = subprocess.run(["bash", "-c", setup + retry + "\n" + block], capture_output=True, text=True)
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertIn("WAIT", result.stdout)
         self.assertNotIn("UNEXPECTED_SERVICE_CHANGE", result.stdout)
