@@ -11,14 +11,21 @@ main() {
     command -v "$tool" >/dev/null || { echo "Missing $tool; contact Blain." >&2; return 1; }
   done
   [[ $(uname -m) == x86_64 ]] || { echo 'Only the tested amd64 release is supported by this entrypoint.' >&2; return 1; }
-  local c="${CONTAINER_NAME:-}"
+  local c="${CONTAINER_NAME:-}" key="${OPERATOR_KEY_NAME:-validator}"
   if [[ -z "$c" ]]; then
     for candidate in salvorias-validator salvorias-droplet salvorias-rpc-node; do
       if docker container inspect "$candidate" >/dev/null 2>&1; then c="$candidate"; break; fi
     done
   fi
-  [[ "$c" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || { echo 'Missing or invalid container; contact Blain.' >&2; return 1; }
+  [[ "$c" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ && "$key" =~ ^[A-Za-z0-9][A-Za-z0-9_.-]*$ ]] || { echo 'Missing or invalid container/key name; contact Blain.' >&2; return 1; }
   local unit="salvorias-license-governance-h$height" root="/var/lib/salvorias-upgrades/license-h$height"
+  local backup=/var/backups/salvorias-validator
+  # Disposable, isolated QA identities get separate service/backup namespaces.
+  if [[ "$c" == salvorias-qa-* ]]; then
+    unit="salvorias-qa-license-$c"
+    root="/var/lib/salvorias-qa-upgrades/$c-license-h$height"
+    backup="/var/backups/$c"
+  fi
   exec 8>"/run/lock/$unit-launcher.lock"
   flock -n 8 || { echo 'Another launcher is running.' >&2; return 1; }
   if [[ "$(systemctl show "$unit" -p ActiveState --value)" =~ ^(active|activating|reloading)$ ]]; then
@@ -54,6 +61,8 @@ Type=oneshot
 TimeoutStartSec=infinity
 Restart=no
 Environment=CONTAINER_NAME=$c
+Environment=OPERATOR_KEY_NAME=$key
+Environment=BACKUP_ROOT=$backup
 ExecStart=$root/scripts/run-license-governance-upgrade.sh apply --manifest-url $url/license-governance-release.json --manifest-sha256 $manifest_sha --upgrade-height $height --yes $extra
 ExecStartPost=$root/scripts/run-license-governance-upgrade.sh verify --manifest-url $url/license-governance-release.json --manifest-sha256 $manifest_sha
 ExecStartPost=/usr/bin/touch $root/completed
