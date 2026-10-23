@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Monitoring stays enabled. Fail closed if the controlled handoff is incomplete.
 set -euo pipefail
+if [[ -x /usr/local/bin/salvorias-rpc-license-guard.sh ]]; then
+  /usr/local/bin/salvorias-rpc-license-guard.sh || exit 1
+fi
 if [[ "${1:-}" == --check-installed ]]; then
   grep -Fq '/usr/local/bin/salvorias-rpc-h4031650-guard.sh' /usr/local/bin/salvorias-rpc-watchdog.sh
   exit

@@ -524,7 +524,7 @@ if [[ "$MODE" == "apply" ]]; then
     echo "Apply requires a valid published --minimum-gas-prices value." >&2
     exit 1
   fi
-  if [[ ( "$UPGRADE_NAME" == "salvorias-security-v1.2.0" || "$UPGRADE_NAME" == "salvorias-legacy-text-v1.2.1" ) && "$FIXED_HEIGHT" != "true" ]]; then
+  if [[ ( "$UPGRADE_NAME" == "salvorias-security-v1.2.0" || "$UPGRADE_NAME" == "salvorias-legacy-text-v1.2.1" || "$UPGRADE_NAME" == "salvorias-license-governance-v1.3.0" ) && "$FIXED_HEIGHT" != "true" ]]; then
     echo "This security release requires --fixed-height; legacy early/recovery modes are not safe." >&2
     exit 1
   fi
@@ -596,6 +596,17 @@ if [[ "$MODE" == "apply" ]]; then
 fi
 
 if [[ "$MODE" == "verify" ]]; then
+  if [[ -n "$BINARY_SHA256" ]]; then
+    [[ "$BINARY_SHA256" =~ ^[a-fA-F0-9]{64}$ ]] || { echo 'Invalid expected binary checksum.' >&2; exit 1; }
+    actual="$(docker exec "$CONTAINER_NAME" sh -lc 'sha256sum "$(command -v evmosd)"' | awk '{print $1}')"
+    [[ "${actual,,}" == "${BINARY_SHA256,,}" && "$CATCHING_UP" == false ]] || {
+      echo 'Running binary differs from the pinned release or is still catching up.' >&2; exit 1;
+    }
+    [[ "$UPGRADE_HEIGHT" =~ ^[0-9]+$ && "$APPLICATION_HEIGHT" -ge "$UPGRADE_HEIGHT" ]] || {
+      echo 'Pinned release has not reached its committed activation height.' >&2; exit 1;
+    }
+    [[ "$HARDEN_RPC" != true ]] || verify_rpc_hardening
+  fi
   echo "Validator verification passed"
   echo "  Container:         $CONTAINER_NAME"
   echo "  Chain:             $NETWORK"
@@ -640,10 +651,23 @@ fi
 # updater with a watchdog restart. Its separately installed guard clears this
 # marker only after the new binary, identity and committed height are verified.
 if [[ "$CONTAINER_NAME" == "salvorias-rpc-node" && "$FIXED_HEIGHT" == "true" ]]; then
+  if [[ "$UPGRADE_NAME" == salvorias-license-governance-v1.3.0 ]]; then
+    /usr/local/bin/salvorias-rpc-license-guard.sh --check-installed
+    install -d -m 0700 /var/lib/salvorias-rpc-watchdog
+    marker=/var/lib/salvorias-rpc-watchdog/license-governance.pending.json
+    [[ ! -e "$marker" ]] || { echo 'Existing read RPC handoff marker requires review.' >&2; exit 1; }
+    pending=$(mktemp /var/lib/salvorias-rpc-watchdog/license-pending.XXXXXX)
+    jq -n --argjson height "$UPGRADE_HEIGHT" --arg binary "${BINARY_SHA256,,}" \
+      --arg identity "$BASE_VALIDATOR_ADDRESS" --arg unit "salvorias-license-governance-h$UPGRADE_HEIGHT" \
+      '{height:$height,binary_sha256:$binary,validator_address:$identity,unit:$unit}' > "$pending"
+    chmod 0600 "$pending"
+    mv -- "$pending" "$marker"
+  else
   [[ "$UPGRADE_HEIGHT" == 4031650 ]] || { echo 'Missing read RPC guard for this height.' >&2; exit 1; }
   /usr/local/bin/salvorias-rpc-h4031650-guard.sh --check-installed
   install -d -m 0700 /var/lib/salvorias-rpc-watchdog
   touch /var/lib/salvorias-rpc-watchdog/upgrade-h4031650.pending
+  fi
 fi
 if [[ "$LATE_TEXT" == true ]]; then late_text_check; fi
 watchdog_was_active=false
