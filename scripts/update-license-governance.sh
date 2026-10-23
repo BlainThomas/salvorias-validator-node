@@ -2,7 +2,7 @@
 # Unarmed release entrypoint. Fill pins ONLY after final manifest/image QA.
 set -euo pipefail
 main() {
-  local height=4099155 url='' manifest_sha='' operator_archive='' operator_sha=''
+  local height=4099155 url='https://github.com/BlainThomas/salvorias-validator-node/releases/download/license-governance-h4099155' manifest_sha='2629676a690589f1d1f5f872a34ad88b3836418e93f8699d83302173068b1899' operator_archive='validator-operator-h4099155.tar.gz' operator_sha='37ee5bc3c068024b5eafe997a2f38a897258a3055f71015219c1ada371b256c4'
   [[ "$height" -gt 0 && "$url" == https://* && "$manifest_sha" =~ ^[a-f0-9]{64}$ && "$operator_sha" =~ ^[a-f0-9]{64}$ && "$operator_archive" =~ ^[A-Za-z0-9._-]+[.]tar[.]gz$ ]] || {
     echo 'License-governance release is not armed. No validator settings changed. Wait for the final command from Blain.' >&2; return 1;
   }

@@ -93,7 +93,9 @@ esac
 
     def test_launcher_is_not_armed_without_final_release_pins(self):
         source = Path(__file__).resolve().parents[1] / "scripts/update-license-governance.sh"
-        result = subprocess.run(["bash", str(source)], capture_output=True, text=True)
+        import re
+        unpinned = re.sub(r"url='[^']*'", "url=''", source.read_text(), count=1)
+        result = subprocess.run(["bash", "-c", unpinned], capture_output=True, text=True)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("release is not armed", result.stderr)
 
