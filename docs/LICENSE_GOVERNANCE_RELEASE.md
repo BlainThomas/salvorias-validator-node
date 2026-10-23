@@ -1,12 +1,14 @@
 # License-governance release preparation
 
-Status: **not armed**. No mainnet validator was changed by preparing these files.
+Status: **armed and staged on all nine managed signers and the public read RPC**
+as of October 23, 2026 15:12 UTC. Old binaries remain running until handoff.
 Do not reuse H4031650, its artifacts or its late-update mode for this release.
 
 Selected target: H4,099,155, approximately October 23, 2026 at 11:00 MDT
 (17:00 UTC), estimated from live H4,097,143 over the preceding 1,000 blocks.
 The exact height controls activation, not wall-clock time. Final artifacts and
-the published launcher remain unarmed pending release QA.
+immutable launcher `f51cf40edb4a56931b96525ffb7087039eadb9c8` passed isolated
+majority/delayed-validator handoff QA, including a confirmed eligible unjail.
 
 The launcher requests conditional unjailing only for validator containers, never
 the read RPC. Completion verifies the release binary, hardening, activation and
@@ -49,11 +51,11 @@ operator archive. Monitoring remains enabled; only restart recovery is held
 while the unit is active or binary/height/identity checks are incomplete. The
 existing watchdog resumes normal checks after the new state is verified.
 
-Release manifest schema (not an armed release):
+Release manifest governance fields (platform checksums are in the published asset):
 
 ```json
 {
-  "release_ready": false,
+  "release_ready": true,
   "chain_id": "salvorias_7282-1",
   "upgrade_name": "salvorias-license-governance-v1.3.0",
   "activation_height": 4099155,
