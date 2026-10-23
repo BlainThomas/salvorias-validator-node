@@ -36,7 +36,7 @@ jq -e '
   .governance.node_license_weight == 1 and .governance.validator_license_weight == 10 and
   .governance.voting_period_seconds == 604800 and
   .governance.proposal_26.voting_end == "2026-10-27T23:10:18.793614692Z" and
-  (.governance.proposal_26.ownership_manifest_sha256 | type == "string" and test("^[a-fA-F0-9]{64}$"))
+  .governance.proposal_26.ownership_manifest_sha256 == "48e897e20294f430b074faf4726569d7660bd13266e4d8ae4fc7c778072a80c6"
 ' "$manifest" >/dev/null || { echo 'Unarmed or incompatible Charter release manifest.' >&2; exit 1; }
 height="$(jq -er '.activation_height | numbers' "$manifest")"
 [[ "$height" =~ ^[0-9]+$ && "$height" -gt 0 ]] || { echo 'Missing fixed activation height.' >&2; exit 1; }

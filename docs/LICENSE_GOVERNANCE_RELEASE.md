@@ -46,7 +46,7 @@ Release manifest schema (not an armed release):
     "voting_period_seconds": 604800,
     "proposal_26": {
       "voting_end": "2026-10-27T23:10:18.793614692Z",
-      "ownership_manifest_sha256": null
+      "ownership_manifest_sha256": "48e897e20294f430b074faf4726569d7660bd13266e4d8ae4fc7c778072a80c6"
     }
   },
   "platforms": {}
@@ -54,5 +54,5 @@ Release manifest schema (not an armed release):
 ```
 
 The disabled staging binary is **not** a deployable mainnet release. First
-assemble the historical snapshot and final activation policy; rebuild, scan,
+select the final activation policy (the historical snapshot is now pinned); rebuild, scan,
 compare the release diff and rehearse the updater with the resulting pins.

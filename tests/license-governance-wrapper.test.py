@@ -21,7 +21,7 @@ class LicenseManifestTests(fixed.ManifestTests):
         self.manifest.update(release_ready=True, chain_id="salvorias_7282-1", governance={
             "node_license_weight": 1, "validator_license_weight": 10,
             "voting_period_seconds": 604800,
-            "proposal_26": {"voting_end": "2026-10-27T23:10:18.793614692Z", "ownership_manifest_sha256": "c" * 64},
+            "proposal_26": {"voting_end": "2026-10-27T23:10:18.793614692Z", "ownership_manifest_sha256": "48e897e20294f430b074faf4726569d7660bd13266e4d8ae4fc7c778072a80c6"},
         })
 
     def test_incompatible_release_is_rejected(self):
@@ -40,7 +40,7 @@ class LicenseManifestTests(fixed.ManifestTests):
                 self.manifest["governance"][field] = value
                 self.assertNotEqual(self.run_wrapper().returncode, 0)
                 self.manifest["governance"][field] = old
-        for field, value in [("ownership_manifest_sha256", "missing"), ("voting_end", "2026-10-28T00:00:00Z")]:
+        for field, value in [("ownership_manifest_sha256", "missing"), ("ownership_manifest_sha256", "c" * 64), ("voting_end", "2026-10-28T00:00:00Z")]:
             with self.subTest(field=field):
                 old = self.manifest["governance"]["proposal_26"][field]
                 self.manifest["governance"]["proposal_26"][field] = value
