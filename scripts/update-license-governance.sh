@@ -2,7 +2,7 @@
 # Unarmed release entrypoint. Fill pins ONLY after final manifest/image QA.
 set -euo pipefail
 main() {
-  local height=0 url='' manifest_sha='' operator_archive='' operator_sha=''
+  local height=4099155 url='' manifest_sha='' operator_archive='' operator_sha=''
   [[ "$height" -gt 0 && "$url" == https://* && "$manifest_sha" =~ ^[a-f0-9]{64}$ && "$operator_sha" =~ ^[a-f0-9]{64}$ && "$operator_archive" =~ ^[A-Za-z0-9._-]+[.]tar[.]gz$ ]] || {
     echo 'License-governance release is not armed. No validator settings changed. Wait for the final command from Blain.' >&2; return 1;
   }
@@ -26,9 +26,10 @@ main() {
   fi
   local status current
   status=$(docker exec "$c" curl -fsS --max-time 10 http://127.0.0.1:26657/status)
-  jq -e '.result.node_info.network == "salvorias_7282-1" and .result.sync_info.catching_up == false' <<<"$status" >/dev/null || { echo 'Wrong chain or still syncing.' >&2; return 1; }
+  jq -e '.result.node_info.network == "salvorias_7282-1"' <<<"$status" >/dev/null || { echo 'Wrong chain.' >&2; return 1; }
   current=$(docker exec "$c" curl -fsS --max-time 10 http://127.0.0.1:26657/abci_info | jq -er '.result.response.last_block_height|tonumber')
-  (( current < height )) || { echo 'Past activation. Do not reset or restore signing state; contact Blain.' >&2; return 1; }
+  # An old node past activation is NOT blindly accepted: the updater checks its
+  # offline committed boundary and leaves it stopped if recovery is necessary.
   umask 077
   install -d -m 0700 "$root"
   curl -fL --retry 3 "$url/$operator_archive" -o "$root/operator.tar.gz"
@@ -39,6 +40,8 @@ main() {
     install -m 0755 "$root/scripts/read-rpc-h4031650-guard.sh" /usr/local/bin/salvorias-rpc-h4031650-guard.sh
     /usr/local/bin/salvorias-rpc-license-guard.sh --check-installed
   fi
+  local extra=--unjail-if-needed
+  [[ "$c" != salvorias-rpc-node ]] || extra=
   cat >"/etc/systemd/system/$unit.service" <<EOF
 [Unit]
 Description=Salvorias license governance handoff at $height
@@ -51,7 +54,7 @@ Type=oneshot
 TimeoutStartSec=infinity
 Restart=no
 Environment=CONTAINER_NAME=$c
-ExecStart=$root/scripts/run-license-governance-upgrade.sh apply --manifest-url $url/license-governance-release.json --manifest-sha256 $manifest_sha --upgrade-height $height --yes
+ExecStart=$root/scripts/run-license-governance-upgrade.sh apply --manifest-url $url/license-governance-release.json --manifest-sha256 $manifest_sha --upgrade-height $height --yes $extra
 ExecStartPost=$root/scripts/run-license-governance-upgrade.sh verify --manifest-url $url/license-governance-release.json --manifest-sha256 $manifest_sha
 ExecStartPost=/usr/bin/touch $root/completed
 [Install]

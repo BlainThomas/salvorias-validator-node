@@ -5,12 +5,14 @@ mode="${1:-}"
 [[ $# == 0 ]] || shift
 manifest_url= manifest_sha256= upgrade_height=
 confirmed=false
+unjail_if_needed=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --manifest-url) manifest_url="$2"; shift 2 ;;
     --manifest-sha256) manifest_sha256="$2"; shift 2 ;;
     --upgrade-height) upgrade_height="$2"; shift 2 ;;
     --yes) confirmed=true; shift ;;
+    --unjail-if-needed) unjail_if_needed=true; shift ;;
     *) echo "Unknown argument: $1" >&2; exit 1 ;;
   esac
 done
@@ -60,4 +62,16 @@ if [[ "$mode" == apply ]]; then
          --upgrade-height "$height" --minimum-gas-prices 1000000000SAVDR)
 fi
 if [[ "$mode" == verify ]]; then args+=(--upgrade-height "$height"); fi
-"$dir/upgrade-validator.sh" "${args[@]}"
+# A repeat of the same operator command must not replace an already updated node.
+# Never skip the ordinary handoff for an old or unknown binary.
+already_updated=false
+if [[ "$mode" == apply && -n "${CONTAINER_NAME:-}" ]]; then
+  running_hash=$(docker exec "$CONTAINER_NAME" sha256sum /usr/bin/evmosd 2>/dev/null | awk '{print $1}') || running_hash=
+  [[ "$running_hash" != "$binary_hash" ]] || already_updated=true
+fi
+if [[ "$already_updated" == false ]]; then
+  "$dir/upgrade-validator.sh" "${args[@]}"
+fi
+if [[ "$mode" == apply && "$unjail_if_needed" == true ]]; then
+  "$dir/finish-license-upgrade.sh" "$binary_hash" "$height"
+fi

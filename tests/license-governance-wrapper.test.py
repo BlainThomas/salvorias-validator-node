@@ -119,5 +119,43 @@ verify_rpc_hardening() { [[ "$HARDENED" == true ]]; }
                 self.assertEqual(result.returncode == 0, not bool(change), result.stderr)
 
 
+class CompletionTests(unittest.TestCase):
+    def test_completion_verifies_before_unjail_and_skips_read_rpc(self):
+        source = Path(__file__).resolve().parents[1] / "scripts/finish-license-upgrade.sh"
+        with tempfile.TemporaryDirectory() as root:
+            p = Path(root)
+            import shutil
+            shutil.copy2(source, p / source.name)
+            (p / "upgrade-validator.sh").write_text('#!/bin/sh\necho verified >> "$LOG"\nexit "$VERIFY_CODE"\n')
+            (p / "docker").write_text('''#!/bin/sh
+case "$*" in
+  *status*) echo '{"validator_info":{"pub_key":{"key":"PUBLIC"}}}' ;;
+  *validators*) echo '{"validators":[{"consensus_pubkey":{"key":"PUBLIC"},"operator_address":"evmosvaloper1fixture"}]}' ;;
+  *) exit 99 ;;
+esac
+''')
+            (p / "python3").write_text('#!/bin/sh\necho "unjail $*" >> "$LOG"\n')
+            (p / "sleep").write_text('#!/bin/sh\nexit 0\n')
+            for name in ["upgrade-validator.sh", "docker", "python3", "sleep"]:
+                (p / name).chmod(0o700)
+            log = p / "calls"
+            env = dict(os.environ, PATH=root + ":" + os.environ["PATH"], LOG=str(log),
+                       CONTAINER_NAME="salvorias-validator", VERIFY_CODE="0")
+            args = ["bash", str(p / source.name), "b" * 64, "4099155"]
+            result = subprocess.run(args, env=env, capture_output=True)
+            self.assertEqual(0, result.returncode, result.stderr)
+            calls = log.read_text().splitlines()
+            self.assertEqual("verified", calls[0])
+            self.assertIn("--submit", calls[1])
+            log.unlink()
+            result = subprocess.run(args, env=dict(env, VERIFY_CODE="1"), capture_output=True)
+            self.assertNotEqual(0, result.returncode)
+            self.assertNotIn("unjail", log.read_text())
+            log.unlink()
+            result = subprocess.run(args, env=dict(env, CONTAINER_NAME="salvorias-rpc-node"), capture_output=True)
+            self.assertEqual(0, result.returncode)
+            self.assertFalse(log.exists())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

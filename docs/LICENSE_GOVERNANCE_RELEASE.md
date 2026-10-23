@@ -3,6 +3,23 @@
 Status: **not armed**. No mainnet validator was changed by preparing these files.
 Do not reuse H4031650, its artifacts or its late-update mode for this release.
 
+Selected target: H4,099,155, approximately October 23, 2026 at 11:00 MDT
+(17:00 UTC), estimated from live H4,097,143 over the preceding 1,000 blocks.
+The exact height controls activation, not wall-clock time. Final artifacts and
+the published launcher remain unarmed pending release QA.
+
+The launcher requests conditional unjailing only for validator containers, never
+the read RPC. Completion verifies the release binary, hardening, activation and
+catch-up before using the existing bounded, journaled unjail helper. Healthy
+validators send no transaction; tombstoned, underfunded or still-ineligible nodes
+fail closed. Re-running on the correct binary avoids replacing it again.
+
+Late recovery is NOT yet universally automatic: an old node that has committed
+activation-height state cannot safely reuse the prior text-only late mode. The
+current updater refuses that state instead of restoring signing state or
+pretending a divergent database will catch up. A tested canonical resync path is
+required before advertising this command as sufficient for every missed window.
+
 The operator experience remains one immutable GitHub command, run as root:
 `curl -fsSL <approved-commit-URL> | sudo bash`. The final URL must not be shared
 until all of these pins exist and the command has been rehearsed end to end:
@@ -39,7 +56,7 @@ Release manifest schema (not an armed release):
   "release_ready": false,
   "chain_id": "salvorias_7282-1",
   "upgrade_name": "salvorias-license-governance-v1.3.0",
-  "activation_height": null,
+  "activation_height": 4099155,
   "governance": {
     "node_license_weight": 1,
     "validator_license_weight": 10,
